@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[oc]
+*.egg-info
+.venv/
+
+# Node
+node_modules/
+.next/
+
+# Database
+*.db
+
+# Environment
+.env
+backend/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Caddy data
+caddy-data/
+caddy-config/
+
+# Stitch downloads
+stitch_switchboard_ai_gateway/
+
+# Misc
+*.log
+tmp_persist.sh
+session-*.md
+mp3-output-*
+test_*.wav
+*.txt

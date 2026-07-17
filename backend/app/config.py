@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./switchboard.db"
     
     # Redis
-    REDIS_URL: str = "redis://localhost:6379"
+    REDIS_URL: str = "redis://localhost:6380"
     
     # LiteLLM (optional; key issuance falls back to local keys if unreachable)
     LITELLM_MASTER_KEY: str = "sk-your-master-key-here"

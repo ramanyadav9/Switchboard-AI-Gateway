@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -36,6 +36,36 @@ class ApiKey(Base):
     stt_target_language: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    is_archived: Mapped[bool] = mapped_column(Integer, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        {"sqlite_autoincrement": False},
+    )
 
 
 class RequestLog(Base):

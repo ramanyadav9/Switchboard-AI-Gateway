@@ -1,25 +1,33 @@
 import asyncio
 import json
+import re
 import time
+import uuid
 
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
+from sqlalchemy.orm import Session
 
+from app.cache import (
+    cache_message, check_request_rate, get_active_generations,
+    incr_active_generations, decr_active_generations,
+)
 from app.config import get_settings
-from app.ratelimit import check_rate_limit, rpm_limit_for
+from app.context import build_prompt, estimate_tokens
+from app.db import SessionLocal
+from app.models import ApiKey, ChatMessage, Conversation, RequestLog, User
+from app.ratelimit import rpm_limit_for
 
 router = APIRouter()
 settings = get_settings()
 
-IDLE_TIMEOUT = 30 * 60  # 30 minutes
-PING_INTERVAL = 30      # 30 seconds
+IDLE_TIMEOUT = 30 * 60
+PING_INTERVAL = 30
+MAX_CONCURRENT_GENS = 3
 
 
-def _authenticate(token: str):
-    from app.db import SessionLocal
-    from app.models import ApiKey, User
-
+def _authenticate(token: str) -> tuple[User | None, ApiKey | None]:
     db = SessionLocal()
     try:
         if token.startswith("sk-"):
@@ -45,6 +53,43 @@ def _authenticate(token: str):
         db.close()
 
 
+def _save_message(conversation_id: str, role: str, content: str, thinking: str | None, token_count: int):
+    db = SessionLocal()
+    try:
+        msg = ChatMessage(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            thinking=thinking,
+            token_count=token_count,
+        )
+        db.add(msg)
+        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv:
+            conv.total_tokens = (conv.total_tokens or 0) + token_count
+            from datetime import datetime, timezone
+            conv.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+    cache_message(conversation_id, role, content, thinking, token_count)
+
+
+def _auto_title(conversation_id: str, user_message: str):
+    title = user_message[:60].strip()
+    if len(user_message) > 60:
+        title = title.rsplit(" ", 1)[0] + "..."
+    db = SessionLocal()
+    try:
+        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv and not conv.title:
+            conv.title = title
+            db.commit()
+    finally:
+        db.close()
+
+
 @router.websocket("/ws/chat")
 async def ws_chat(ws: WebSocket):
     await ws.accept()
@@ -64,9 +109,8 @@ async def ws_chat(ws: WebSocket):
         nonlocal last_activity
         while True:
             await asyncio.sleep(PING_INTERVAL)
-            idle = time.monotonic() - last_activity
-            if idle >= IDLE_TIMEOUT:
-                await ws.send_json({"type": "timeout", "text": "Connection closed after 30 min idle"})
+            if time.monotonic() - last_activity >= IDLE_TIMEOUT:
+                await ws.send_json({"type": "timeout", "text": "Idle timeout"})
                 await ws.close(code=1000)
                 return
             try:
@@ -85,44 +129,74 @@ async def ws_chat(ws: WebSocket):
             if req.get("type") == "pong":
                 continue
 
-            model = req.get("model", settings.DEFAULT_MODEL)
-            messages = req.get("messages", [])
-            temperature = req.get("temperature", 0.7)
-            max_tokens = req.get("max_tokens", 2048)
-            top_p = req.get("top_p", 1.0)
-            stream = req.get("stream", True)
+            action = req.get("action", "message")
 
-            if not messages:
-                await ws.send_json({"type": "error", "text": "No messages provided"})
+            if action == "new_conversation":
+                db = SessionLocal()
+                try:
+                    conv = Conversation(
+                        id=str(uuid.uuid4()),
+                        user_id=user.id,
+                        title=req.get("title"),
+                        model=req.get("model", settings.DEFAULT_MODEL),
+                        system_prompt=req.get("system_prompt"),
+                    )
+                    db.add(conv)
+                    db.commit()
+                    await ws.send_json({"type": "conversation", "id": conv.id, "model": conv.model})
+                finally:
+                    db.close()
                 continue
 
-            # Rate limit
-            limit_key = api_key.id if api_key else user.id
-            limit = rpm_limit_for(user, api_key.rpm_limit if api_key else None)
-            allowed, retry_after = check_rate_limit(limit_key, limit)
-            if not allowed:
-                await ws.send_json({"type": "error", "text": f"Rate limited. Retry after {retry_after}s"})
-                continue
-
-            # Model scope check
-            if api_key and api_key.models_allowed:
-                if model not in api_key.models_allowed:
-                    await ws.send_json({"type": "error", "text": f"Key not authorized for model '{model}'"})
+            if action == "message":
+                conversation_id = req.get("conversation_id")
+                content = req.get("content", "").strip()
+                if not conversation_id or not content:
+                    await ws.send_json({"type": "error", "text": "Missing conversation_id or content"})
                     continue
 
-            body = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "top_p": top_p,
-                "stream": stream,
-            }
+                # Rate limit
+                limit = rpm_limit_for(user, api_key.rpm_limit if api_key else None)
+                allowed, retry_after = check_request_rate(user.id, limit or 50)
+                if not allowed:
+                    await ws.send_json({"type": "error", "text": f"Rate limited. Retry after {retry_after}s"})
+                    continue
 
-            if stream:
-                await _stream_response(ws, body)
-            else:
-                await _full_response(ws, body)
+                # Concurrency limit
+                active = get_active_generations(user.id)
+                if active >= MAX_CONCURRENT_GENS:
+                    await ws.send_json({"type": "error", "text": "Too many concurrent requests"})
+                    continue
+
+                # Fetch conversation
+                db = SessionLocal()
+                try:
+                    conv = db.query(Conversation).filter(
+                        Conversation.id == conversation_id,
+                        Conversation.user_id == user.id,
+                    ).first()
+                    if not conv:
+                        await ws.send_json({"type": "error", "text": "Conversation not found"})
+                        continue
+
+                    model = req.get("model", conv.model)
+                    temperature = req.get("temperature", 0.7)
+                    max_tokens = req.get("max_tokens", 2048)
+
+                    # Build context
+                    ctx = build_prompt(conv, content, db)
+                finally:
+                    db.close()
+
+                # Stream response
+                incr_active_generations(user.id)
+                try:
+                    await _stream_and_save(ws, ctx, model, temperature, max_tokens, conversation_id, content, user.id)
+                finally:
+                    decr_active_generations(user.id)
+
+            elif action == "stop":
+                pass
 
     except WebSocketDisconnect:
         pass
@@ -135,18 +209,38 @@ async def ws_chat(ws: WebSocket):
         ping_task.cancel()
 
 
-async def _stream_response(ws: WebSocket, body: dict):
+async def _stream_and_save(
+    ws: WebSocket,
+    ctx,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    conversation_id: str,
+    user_content: str,
+    user_id: str,
+):
     await ws.send_json({"type": "start"})
+
+    body = {
+        "model": model,
+        "messages": ctx.messages,
+        "stream": True,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    raw_content = ""
+    raw_thinking = ""
+    prompt_tokens = 0
+    completion_tokens = 0
+    start_time = time.time()
 
     async with httpx.AsyncClient(timeout=300.0) as client:
         try:
             async with client.stream(
                 "POST",
                 f"{settings.VLLM_LLM_BASE_URL}/v1/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {settings.VLLM_API_KEY}",
-                },
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {settings.VLLM_API_KEY}"},
                 json=body,
             ) as response:
                 if response.status_code >= 400:
@@ -164,53 +258,51 @@ async def _stream_response(ws: WebSocket, body: dict):
                             continue
                         data = line[6:]
                         if data == "[DONE]":
-                            await ws.send_json({"type": "done"})
-                            return
+                            break
                         try:
                             parsed = json.loads(data)
                             delta = parsed.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
-                            reasoning = delta.get("reasoning_content", "")
+                            usage = parsed.get("usage")
+                            if usage:
+                                prompt_tokens = usage.get("prompt_tokens", 0)
+                                completion_tokens = usage.get("completion_tokens", 0)
 
-                            if content or reasoning:
+                            c = delta.get("content", "")
+                            r = delta.get("reasoning_content", "")
+                            if c or r:
                                 msg: dict = {"type": "token"}
-                                if content:
-                                    msg["content"] = content
-                                if reasoning:
-                                    msg["reasoning"] = reasoning
+                                if c:
+                                    raw_content += c
+                                    msg["content"] = c
+                                if r:
+                                    raw_thinking += r
+                                    msg["reasoning"] = r
                                 await ws.send_json(msg)
                         except json.JSONDecodeError:
                             pass
 
         except httpx.RequestError as e:
             await ws.send_json({"type": "error", "text": f"Model server error: {str(e)}"})
+            return
 
-    await ws.send_json({"type": "done"})
+    latency_ms = int((time.time() - start_time) * 1000)
 
+    # Parse <think> tags from content
+    think_match = re.match(r"^<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
+    if think_match:
+        raw_thinking = raw_thinking or think_match.group(1).strip()
+        raw_content = think_match.group(2).strip()
 
-async def _full_response(ws: WebSocket, body: dict):
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        try:
-            response = await client.post(
-                f"{settings.VLLM_LLM_BASE_URL}/v1/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {settings.VLLM_API_KEY}",
-                },
-                json=body,
-            )
-            if response.status_code >= 400:
-                await ws.send_json({"type": "error", "text": response.text})
-                return
+    user_tokens = estimate_tokens(user_content)
+    assistant_tokens = completion_tokens or estimate_tokens(raw_content)
 
-            result = response.json()
-            text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            usage = result.get("usage", {})
-            await ws.send_json({
-                "type": "response",
-                "content": text,
-                "usage": usage,
-            })
+    # Save asynchronously
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
+    loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
+    loop.run_in_executor(None, _auto_title, conversation_id, user_content)
 
-        except httpx.RequestError as e:
-            await ws.send_json({"type": "error", "text": str(e)})
+    await ws.send_json({
+        "type": "done",
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "latency_ms": latency_ms},
+    })

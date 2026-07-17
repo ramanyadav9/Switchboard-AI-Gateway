@@ -68,7 +68,21 @@ services:
       - backend
       - frontend
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    network_mode: host
+    command: ["redis-server", "--port", "6380", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", "60", "100"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
 volumes:
   pgdata:
+  redis-data:
   caddy-data:
   caddy-config:

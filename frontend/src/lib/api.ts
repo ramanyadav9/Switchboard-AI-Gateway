@@ -61,6 +61,32 @@ export const chat = {
     }),
 };
 
+export const conversations = {
+  create: (opts?: { model?: string; system_prompt?: string; title?: string }) =>
+    apiFetch("/me/conversations", { method: "POST", body: JSON.stringify(opts || {}) }),
+  list: (archived: boolean = false, limit: number = 50) =>
+    apiFetch(`/me/conversations?archived=${archived}&limit=${limit}`),
+  get: (id: string) => apiFetch(`/me/conversations/${id}`),
+  update: (id: string, data: { title?: string; system_prompt?: string; is_archived?: boolean }) =>
+    apiFetch(`/me/conversations/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    apiFetch(`/me/conversations/${id}`, { method: "DELETE" }),
+  messages: (id: string, limit: number = 50, before?: string) =>
+    apiFetch(`/me/conversations/${id}/messages?limit=${limit}${before ? `&before=${before}` : ""}`),
+};
+
+export function chatStream(body: { conversation_id: string; content: string; model?: string; temperature?: number; max_tokens?: number }) {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  return fetch(`${API_BASE}/me/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+}
+
 export const usage = {
   stats: (days: number = 30) => apiFetch(`/me/usage?days=${days}`),
   recent: (limit: number = 10) => apiFetch(`/me/recent?limit=${limit}`),

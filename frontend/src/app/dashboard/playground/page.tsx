@@ -101,7 +101,63 @@ function ChatPlayground() {
   const [temperature, setTemperature] = useState(0.7);
   const [maxLength, setMaxLength] = useState(2048);
   const [topP, setTopP] = useState(1.0);
+  const [wsConnected, setWsConnected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const chatWsRef = useRef<WebSocket | null>(null);
+  const pendingRef = useRef<{ allMessages: Message[]; rawContent: string; rawThinking: string } | null>(null);
+
+  const WS_CHAT = API_BASE.replace(/^http/, "ws") + "/ws/chat";
+
+  function connectWs() {
+    const token = localStorage.getItem("token") || "";
+    const ws = new WebSocket(`${WS_CHAT}?token=${token}`);
+    chatWsRef.current = ws;
+
+    ws.onopen = () => setWsConnected(true);
+    ws.onclose = () => {
+      setWsConnected(false);
+      setTimeout(connectWs, 2000);
+    };
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      const p = pendingRef.current;
+      if (!p) return;
+
+      if (msg.type === "token") {
+        if (msg.reasoning) p.rawThinking += msg.reasoning;
+        if (msg.content) p.rawContent += msg.content;
+
+        const parsed = parseThinkTags(p.rawContent);
+        const thinking = p.rawThinking || parsed.thinking;
+        const content = parsed.content;
+
+        if (thinking) setStreamingThinking(thinking);
+        if (content) setStreaming(content);
+        else if (p.rawContent && parsed.thinking) setStreaming("");
+      } else if (msg.type === "done") {
+        const parsed = parseThinkTags(p.rawContent);
+        const finalThinking = p.rawThinking || parsed.thinking;
+        const finalContent = parsed.content || p.rawContent;
+
+        setMessages([...p.allMessages, {
+          role: "assistant",
+          content: finalContent || "No response",
+          thinking: finalThinking || undefined,
+        }]);
+        setStreaming("");
+        setStreamingThinking("");
+        setLoading(false);
+        pendingRef.current = null;
+      } else if (msg.type === "error") {
+        setMessages([...p.allMessages, { role: "assistant", content: `Error: ${msg.text}` }]);
+        setStreaming("");
+        setStreamingThinking("");
+        setLoading(false);
+        pendingRef.current = null;
+      }
+    };
+  }
 
   useEffect(() => {
     (async () => {
@@ -112,14 +168,20 @@ function ChatPlayground() {
         if (ids.length) { setModels(ids); setModel(ids[0]); }
       } catch { /* keep default */ }
     })();
+    connectWs();
+    return () => { chatWsRef.current?.close(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, streaming, streamingThinking]);
 
-  async function send() {
+  function send() {
     if (!input.trim() || loading) return;
+    const ws = chatWsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
     const userMsg: Message = { role: "user", content: input };
     const systemMsgs: { role: string; content: string }[] = systemPrompt
       ? [{ role: "system", content: systemPrompt }]
@@ -131,85 +193,16 @@ function ChatPlayground() {
     setStreaming("");
     setStreamingThinking("");
 
-    try {
-      const res = await fetch(`${API_BASE}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({
-          model,
-          messages: [...systemMsgs, ...allMessages],
-          stream: true,
-          temperature,
-          max_tokens: maxLength,
-          top_p: topP,
-        }),
-      });
+    pendingRef.current = { allMessages, rawContent: "", rawThinking: "" };
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || "Request failed");
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No stream reader");
-
-      const decoder = new TextDecoder();
-      let rawContent = "";
-      let rawThinking = "";
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ")) continue;
-          const data = trimmed.slice(6);
-          if (data === "[DONE]") continue;
-          try {
-            const chunk = JSON.parse(data);
-            const delta = chunk.choices?.[0]?.delta;
-            if (!delta) continue;
-            const reasoning = delta.reasoning_content || "";
-            if (reasoning) { rawThinking += reasoning; }
-            const content = delta.content || "";
-            if (content) { rawContent += content; }
-          } catch { /* skip */ }
-        }
-
-        // Parse <think> tags from content stream in real-time
-        const combinedThinking = rawThinking || "";
-        const parsed = parseThinkTags(rawContent);
-        const displayThinking = combinedThinking || parsed.thinking;
-        const displayContent = parsed.content;
-
-        if (displayThinking) setStreamingThinking(displayThinking);
-        if (displayContent) setStreaming(displayContent);
-        else if (rawContent && !parsed.content && parsed.thinking) setStreaming("");
-      }
-
-      const finalParsed = parseThinkTags(rawContent);
-      const finalThinking = rawThinking || finalParsed.thinking;
-      const finalContent = finalParsed.content || rawContent;
-
-      setMessages([...allMessages, {
-        role: "assistant",
-        content: finalContent || "No response",
-        thinking: finalThinking || undefined,
-      }]);
-      setStreaming("");
-      setStreamingThinking("");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      setMessages([...allMessages, { role: "assistant", content: `Error: ${msg}` }]);
-      setStreaming("");
-      setStreamingThinking("");
-    } finally {
-      setLoading(false);
-    }
+    ws.send(JSON.stringify({
+      model,
+      messages: [...systemMsgs, ...allMessages],
+      stream: true,
+      temperature,
+      max_tokens: maxLength,
+      top_p: topP,
+    }));
   }
 
   function clearChat() {
@@ -374,9 +367,12 @@ function ChatPlayground() {
             </button>
           </div>
           <div className="flex items-center justify-center gap-3 mt-2 text-[11px] text-[#464554] font-[family-name:var(--font-mono)]">
-            <span>Shift + Enter to add a new line</span>
+            <span className="flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-[#22c55e]" : "bg-[#f43f5e]"}`} />
+              {wsConnected ? "Connected" : "Reconnecting..."}
+            </span>
             <span>&middot;</span>
-            <span>AI models can make mistakes</span>
+            <span>Shift + Enter to add a new line</span>
           </div>
         </div>
       </div>

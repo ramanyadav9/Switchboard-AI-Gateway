@@ -1,4 +1,6 @@
+import asyncio
 import json
+import time
 
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -9,6 +11,9 @@ from app.ratelimit import check_rate_limit, rpm_limit_for
 
 router = APIRouter()
 settings = get_settings()
+
+IDLE_TIMEOUT = 30 * 60  # 30 minutes
+PING_INTERVAL = 30      # 30 seconds
 
 
 def _authenticate(token: str):
@@ -53,10 +58,32 @@ async def ws_chat(ws: WebSocket):
 
     await ws.send_json({"status": "connected", "model": settings.DEFAULT_MODEL})
 
+    last_activity = time.monotonic()
+
+    async def ping_loop():
+        nonlocal last_activity
+        while True:
+            await asyncio.sleep(PING_INTERVAL)
+            idle = time.monotonic() - last_activity
+            if idle >= IDLE_TIMEOUT:
+                await ws.send_json({"type": "timeout", "text": "Connection closed after 30 min idle"})
+                await ws.close(code=1000)
+                return
+            try:
+                await ws.send_json({"type": "ping"})
+            except Exception:
+                return
+
+    ping_task = asyncio.create_task(ping_loop())
+
     try:
         while True:
             raw = await ws.receive_text()
+            last_activity = time.monotonic()
             req = json.loads(raw)
+
+            if req.get("type") == "pong":
+                continue
 
             model = req.get("model", settings.DEFAULT_MODEL)
             messages = req.get("messages", [])
@@ -104,6 +131,8 @@ async def ws_chat(ws: WebSocket):
             await ws.close()
         except Exception:
             pass
+    finally:
+        ping_task.cancel()
 
 
 async def _stream_response(ws: WebSocket, body: dict):

@@ -109,18 +109,27 @@ function ChatPlayground() {
   const WS_CHAT = API_BASE.replace(/^http/, "ws") + "/ws/chat";
 
   function connectWs() {
+    if (chatWsRef.current?.readyState === WebSocket.OPEN) return;
     const token = localStorage.getItem("token") || "";
     const ws = new WebSocket(`${WS_CHAT}?token=${token}`);
     chatWsRef.current = ws;
 
     ws.onopen = () => setWsConnected(true);
-    ws.onclose = () => {
-      setWsConnected(false);
-      setTimeout(connectWs, 2000);
-    };
+    ws.onclose = () => setWsConnected(false);
 
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
+
+      if (msg.type === "ping") {
+        ws.send(JSON.stringify({ type: "pong" }));
+        return;
+      }
+
+      if (msg.type === "timeout") {
+        setWsConnected(false);
+        return;
+      }
+
       const p = pendingRef.current;
       if (!p) return;
 
@@ -159,6 +168,13 @@ function ChatPlayground() {
     };
   }
 
+  function ensureConnected(): boolean {
+    const ws = chatWsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) return true;
+    connectWs();
+    return false;
+  }
+
   useEffect(() => {
     (async () => {
       try {
@@ -179,6 +195,10 @@ function ChatPlayground() {
 
   function send() {
     if (!input.trim() || loading) return;
+    if (!ensureConnected()) {
+      setTimeout(() => send(), 500);
+      return;
+    }
     const ws = chatWsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -368,8 +388,8 @@ function ChatPlayground() {
           </div>
           <div className="flex items-center justify-center gap-3 mt-2 text-[11px] text-[#464554] font-[family-name:var(--font-mono)]">
             <span className="flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-[#22c55e]" : "bg-[#f43f5e]"}`} />
-              {wsConnected ? "Connected" : "Reconnecting..."}
+              <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-[#22c55e]" : "bg-[#464554]"}`} />
+              {wsConnected ? "Connected" : "Idle — reconnects on send"}
             </span>
             <span>&middot;</span>
             <span>Shift + Enter to add a new line</span>

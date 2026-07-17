@@ -42,10 +42,20 @@ class KeyCreatedResponse(KeyResponse):
     key: str
 
 
-def generate_api_key() -> str:
-    import secrets
+import secrets
+import bcrypt
 
+
+def generate_api_key() -> str:
     return f"sk-{secrets.token_hex(32)}"
+
+
+def hash_api_key(key: str) -> str:
+    return bcrypt.hashpw(key.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_api_key(key: str, key_hash: str) -> bool:
+    return bcrypt.checkpw(key.encode("utf-8"), key_hash.encode("utf-8"))
 
 
 def try_provision_litellm_key(
@@ -92,8 +102,8 @@ def create_key(
         id=key_id,
         user_id=current_user.id,
         name=key_data.name,
-        key=api_key,
-        key_prefix=api_key[:8] + "..." + api_key[-4:],
+        key_hash=hash_api_key(api_key),
+        key_prefix=api_key[:12],
         models_allowed=models_allowed,
         rpm_limit=key_data.rpm_limit,
         tpm_limit=key_data.tpm_limit,

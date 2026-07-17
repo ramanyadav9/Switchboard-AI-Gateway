@@ -97,15 +97,19 @@ def get_caller(
     db: Annotated[Session, Depends(get_db)],
 ) -> Caller:
     """Authenticate a gateway request via either an API key or a JWT."""
-    api_key = (
-        db.query(ApiKey)
-        .filter(ApiKey.key == token, ApiKey.status == "active")
-        .first()
-    )
-    if api_key is not None:
-        user = db.query(User).filter(User.id == api_key.user_id).first()
-        if user is not None:
-            return Caller(user=user, api_key=api_key)
+    if token.startswith("sk-"):
+        from app.routes.keys import verify_api_key
+        prefix = token[:12]
+        candidates = (
+            db.query(ApiKey)
+            .filter(ApiKey.key_prefix == prefix, ApiKey.status == "active")
+            .all()
+        )
+        for candidate in candidates:
+            if verify_api_key(token, candidate.key_hash):
+                user = db.query(User).filter(User.id == candidate.user_id).first()
+                if user is not None:
+                    return Caller(user=user, api_key=candidate)
 
     user = _user_from_jwt(token, db)
     return Caller(user=user)

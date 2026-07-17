@@ -29,18 +29,23 @@ def _authenticate_ws(token: str) -> AuthResult | None:
     from app.db import SessionLocal
     from app.models import ApiKey
 
-    db = SessionLocal()
-    try:
-        api_key = db.query(ApiKey).filter(ApiKey.key == token, ApiKey.status == "active").first()
-        if api_key:
-            return AuthResult(
-                user_id=api_key.user_id,
-                stt_engine=api_key.stt_engine or "sensevoice",
-                stt_language=api_key.stt_language or "auto",
-                stt_target_language=api_key.stt_target_language,
-            )
-    finally:
-        db.close()
+    if token.startswith("sk-"):
+        from app.routes.keys import verify_api_key
+        db = SessionLocal()
+        try:
+            prefix = token[:12]
+            candidates = db.query(ApiKey).filter(ApiKey.key_prefix == prefix, ApiKey.status == "active").all()
+            for candidate in candidates:
+                if verify_api_key(token, candidate.key_hash):
+                    return AuthResult(
+                        user_id=candidate.user_id,
+                        stt_engine=candidate.stt_engine or "sensevoice",
+                        stt_language=candidate.stt_language or "auto",
+                        stt_target_language=candidate.stt_target_language,
+                    )
+        finally:
+            db.close()
+        return None
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])

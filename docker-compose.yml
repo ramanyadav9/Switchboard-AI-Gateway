@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - POSTGRES_DB=switchboard
+      - POSTGRES_USER=switchboard
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-switchboard-db-secret}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U switchboard"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build: ./backend
     restart: unless-stopped
@@ -10,15 +26,18 @@ services:
       - SECRET_KEY=${SECRET_KEY:-change-this-to-a-random-64-char-string}
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=1440
-      - DATABASE_URL=sqlite:///./switchboard.db
+      - DATABASE_URL=postgresql://switchboard:${POSTGRES_PASSWORD:-switchboard-db-secret}@localhost:5432/switchboard
       - VLLM_LLM_BASE_URL=http://localhost:8000
       - VLLM_STT_BASE_URL=http://localhost:8004
       - VLLM_TTS_BASE_URL=http://localhost:8002
       - VLLM_API_KEY=${VLLM_API_KEY:-vaani-local-key}
       - DEFAULT_MODEL=Qwen3-14B
       - CORS_ORIGINS=["*"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -50,5 +69,6 @@ services:
       - frontend
 
 volumes:
+  pgdata:
   caddy-data:
   caddy-config:

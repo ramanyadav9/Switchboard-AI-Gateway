@@ -25,12 +25,12 @@ type ServiceStatus = {
 };
 
 function pctChange(today: number, yesterday: number): { text: string; color: string } {
-  if (yesterday === 0 && today === 0) return { text: "—", color: "text-[#c7c4d7]" };
+  if (yesterday === 0 && today === 0) return { text: "—", color: "" };
   if (yesterday === 0) return { text: "+100%", color: "text-[#ffb783]" };
   const pct = Math.round(((today - yesterday) / yesterday) * 100);
   if (pct > 0) return { text: `+${pct}%`, color: "text-[#ffb783]" };
   if (pct < 0) return { text: `${pct}%`, color: "text-[#ffb4ab]" };
-  return { text: "0%", color: "text-[#c7c4d7]" };
+  return { text: "0%", color: "" };
 }
 
 function formatNum(n: number): string {
@@ -80,8 +80,8 @@ export default function DashboardPage() {
   useEffect(() => { fetchData(chartRange); }, [chartRange, fetchData]);
 
   const activeKeys = keyList.filter((k) => k.status === "active").length;
-  const reqChange = stats ? pctChange(stats.requests_today, stats.requests_yesterday) : { text: "—", color: "text-[#c7c4d7]" };
-  const tokChange = stats ? pctChange(stats.tokens_today, stats.tokens_yesterday) : { text: "—", color: "text-[#c7c4d7]" };
+  const reqChange = stats ? pctChange(stats.requests_today, stats.requests_yesterday) : { text: "—", color: "" };
+  const tokChange = stats ? pctChange(stats.tokens_today, stats.tokens_yesterday) : { text: "—", color: "" };
 
   const chartW = 100;
   const chartH = 100;
@@ -100,63 +100,63 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="max-w-[1280px] mx-auto w-full flex flex-col gap-12 p-6 md:p-12">
+    <div className="flex flex-col gap-12">
       {/* Page Header */}
       <header>
-        <h2 className="text-[24px] leading-[32px] tracking-[-0.01em] font-semibold text-[#e5e2e1]">Dashboard</h2>
-        <p className="text-[14px] leading-[20px] text-[#c7c4d7] mt-1">Overview of your API usage and performance.</p>
+        <h2 className="text-[24px] leading-[32px] tracking-[-0.01em] font-semibold">Dashboard</h2>
+        <p className="text-[14px] leading-[20px] mt-1" style={{ color: "var(--fg-secondary)" }}>Overview of your API usage and performance.</p>
       </header>
 
       {/* Stats Grid */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-[#171717] border border-[#262626] rounded-lg p-4 flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[#c7c4d7]">
+        <div className="t-card rounded-lg p-4 flex flex-col gap-2">
+          <div className="flex items-center justify-between" style={{ color: "var(--fg-secondary)" }}>
             <h3 className="text-[12px] leading-[18px]">Requests today</h3>
             <span className="material-symbols-outlined text-[16px]">swap_vert</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-[30px] leading-[36px] tracking-[-0.02em] font-semibold font-[family-name:var(--font-mono)] text-[#e5e2e1]">
+            <span className="text-[30px] leading-[36px] tracking-[-0.02em] font-semibold font-[family-name:var(--font-mono)]">
               {loading ? "—" : formatNum(stats?.requests_today ?? 0)}
             </span>
-            <span className={`font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold ${reqChange.color}`}>
+            <span className={`font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold ${reqChange.color}`} style={!reqChange.color ? { color: "var(--fg-secondary)" } : undefined}>
               {loading ? "" : reqChange.text}
             </span>
           </div>
         </div>
 
-        <div className="bg-[#171717] border border-[#262626] rounded-lg p-4 flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[#c7c4d7]">
+        <div className="t-card rounded-lg p-4 flex flex-col gap-2">
+          <div className="flex items-center justify-between" style={{ color: "var(--fg-secondary)" }}>
             <h3 className="text-[12px] leading-[18px]">Tokens used</h3>
             <span className="material-symbols-outlined text-[16px]">token</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-[30px] leading-[36px] tracking-[-0.02em] font-semibold font-[family-name:var(--font-mono)] text-[#e5e2e1]">
+            <span className="text-[30px] leading-[36px] tracking-[-0.02em] font-semibold font-[family-name:var(--font-mono)]">
               {loading ? "—" : formatNum(stats?.tokens_today ?? 0)}
             </span>
-            <span className={`font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold ${tokChange.color}`}>
+            <span className={`font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold ${tokChange.color}`} style={!tokChange.color ? { color: "var(--fg-secondary)" } : undefined}>
               {loading ? "" : tokChange.text}
             </span>
           </div>
         </div>
 
-        <div className="bg-[#171717] border border-[#262626] rounded-lg p-4 flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[#c7c4d7]">
+        <div className="t-card rounded-lg p-4 flex flex-col gap-2">
+          <div className="flex items-center justify-between" style={{ color: "var(--fg-secondary)" }}>
             <h3 className="text-[12px] leading-[18px]">Active Keys</h3>
             <span className="material-symbols-outlined text-[16px]">key</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-[30px] leading-[36px] tracking-[-0.02em] font-semibold font-[family-name:var(--font-mono)] text-[#e5e2e1]">
+            <span className="text-[30px] leading-[36px] tracking-[-0.02em] font-semibold font-[family-name:var(--font-mono)]">
               {loading ? "—" : activeKeys}
             </span>
-            <span className="text-[12px] leading-[18px] text-[#c7c4d7]">/ 10 limit</span>
+            <span className="text-[12px] leading-[18px]" style={{ color: "var(--fg-secondary)" }}>/ 10 limit</span>
           </div>
         </div>
       </section>
 
       {/* Usage Chart */}
-      <section className="bg-[#171717] border border-[#262626] rounded-lg flex flex-col h-[400px]">
-        <div className="border-b border-[#262626] p-4 flex items-center justify-between">
-          <h3 className="text-[14px] leading-[20px] text-[#e5e2e1] font-semibold">
+      <section className="t-card rounded-lg flex flex-col h-[400px]">
+        <div className="border-b p-4 flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+          <h3 className="text-[14px] leading-[20px] font-semibold">
             Usage Overview ({chartRange === "7D" ? "7" : chartRange === "30D" ? "30" : "90"} Days)
           </h3>
           <div className="flex gap-1">
@@ -167,8 +167,9 @@ export default function DashboardPage() {
                 className={`text-[12px] leading-[18px] px-2 py-1 rounded transition-colors ${
                   chartRange === r
                     ? "bg-[#c0c1ff] text-[#1000a9]"
-                    : "bg-[#262626] text-[#e5e2e1] hover:bg-[#353534]"
+                    : "hover:opacity-80"
                 }`}
+                style={chartRange !== r ? { background: "var(--bg-emphasis)" } : undefined}
               >
                 {r}
               </button>
@@ -177,7 +178,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex-1 p-4 relative flex items-end">
           {/* Y-axis labels */}
-          <div className="absolute left-4 top-4 bottom-8 w-10 flex flex-col justify-between items-end font-[family-name:var(--font-mono)] text-[11px] leading-[16px] text-[#c7c4d7] pr-1">
+          <div className="absolute left-4 top-4 bottom-8 w-10 flex flex-col justify-between items-end font-[family-name:var(--font-mono)] text-[11px] leading-[16px] pr-1" style={{ color: "var(--fg-secondary)" }}>
             <span>{formatNum(maxChartVal)}</span>
             <span>{formatNum(Math.round(maxChartVal * 0.75))}</span>
             <span>{formatNum(Math.round(maxChartVal * 0.5))}</span>
@@ -185,10 +186,10 @@ export default function DashboardPage() {
             <span>0</span>
           </div>
           {/* Chart area */}
-          <div className="flex-1 ml-12 border-l border-b border-[#262626] relative h-full">
-            <div className="absolute top-1/4 left-0 w-full border-t border-[#262626] border-dashed opacity-50" />
-            <div className="absolute top-2/4 left-0 w-full border-t border-[#262626] border-dashed opacity-50" />
-            <div className="absolute top-3/4 left-0 w-full border-t border-[#262626] border-dashed opacity-50" />
+          <div className="flex-1 ml-12 border-l border-b relative h-full" style={{ borderColor: "var(--border)" }}>
+            <div className="absolute top-1/4 left-0 w-full border-t border-dashed opacity-50" style={{ borderColor: "var(--border)" }} />
+            <div className="absolute top-2/4 left-0 w-full border-t border-dashed opacity-50" style={{ borderColor: "var(--border)" }} />
+            <div className="absolute top-3/4 left-0 w-full border-t border-dashed opacity-50" style={{ borderColor: "var(--border)" }} />
             {chart.line && (
               <svg className="absolute inset-0 w-full h-full overflow-visible" preserveAspectRatio="none" viewBox={`0 0 ${chartW} ${chartH}`}>
                 <defs>
@@ -205,7 +206,7 @@ export default function DashboardPage() {
               </svg>
             )}
             {!chart.line && !loading && (
-              <div className="absolute inset-0 flex items-center justify-center text-[#464554] text-[13px] font-[family-name:var(--font-mono)]">
+              <div className="absolute inset-0 flex items-center justify-center text-[13px] font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>
                 No usage data yet
               </div>
             )}
@@ -216,26 +217,26 @@ export default function DashboardPage() {
       {/* Bottom Row */}
       <section className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
         {/* Recent Endpoints */}
-        <div className="bg-[#171717] border border-[#262626] rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#262626]">
-            <h3 className="text-[14px] leading-[20px] text-[#e5e2e1] font-semibold">Recent Endpoints</h3>
+        <div className="t-card rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b" style={{ borderColor: "var(--border)" }}>
+            <h3 className="text-[14px] leading-[20px] font-semibold">Recent Endpoints</h3>
           </div>
           <table className="w-full text-left">
             <thead>
-              <tr className="border-b border-[#262626]">
-                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold text-[#c7c4d7] uppercase">Method</th>
-                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold text-[#c7c4d7] uppercase">Path</th>
-                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold text-[#c7c4d7] uppercase">Status</th>
-                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold text-[#c7c4d7] uppercase">Latency</th>
+              <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold uppercase" style={{ color: "var(--fg-secondary)" }}>Method</th>
+                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold uppercase" style={{ color: "var(--fg-secondary)" }}>Path</th>
+                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold uppercase" style={{ color: "var(--fg-secondary)" }}>Status</th>
+                <th className="py-2 px-4 font-[family-name:var(--font-mono)] text-[10px] leading-[12px] tracking-[0.05em] font-bold uppercase" style={{ color: "var(--fg-secondary)" }}>Latency</th>
               </tr>
             </thead>
-            <tbody className="text-[14px] leading-[20px] text-[#e5e2e1] divide-y divide-[#262626]">
+            <tbody className="text-[14px] leading-[20px] divide-y divide-[#262626]">
               {loading ? (
-                <tr><td colSpan={4} className="px-4 py-6 text-center text-[#464554] text-[13px]">Loading...</td></tr>
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-[13px]" style={{ color: "var(--fg-muted)" }}>Loading...</td></tr>
               ) : recent.length === 0 ? (
-                <tr><td colSpan={4} className="px-4 py-6 text-center text-[#464554] text-[13px] font-[family-name:var(--font-mono)]">No requests yet</td></tr>
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-[13px] font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>No requests yet</td></tr>
               ) : recent.map((r, i) => (
-                <tr key={i} className="hover:bg-[#201f1f] transition-colors">
+                <tr key={i} className="hover:bg-white/5 dark:hover:bg-white/5 transition-colors">
                   <td className="py-2.5 px-4">
                     <span className={`font-[family-name:var(--font-mono)] text-[10px] tracking-[0.05em] font-bold px-1.5 py-0.5 rounded ${
                       r.method === "POST" ? "bg-[#6366f1]/15 text-[#c0c1ff]" : "bg-[#4ade80]/15 text-[#4ade80]"
@@ -243,9 +244,9 @@ export default function DashboardPage() {
                       {r.method}
                     </span>
                   </td>
-                  <td className="py-2.5 px-4 font-[family-name:var(--font-mono)] text-[13px] text-[#c7c4d7]">{r.path}</td>
+                  <td className="py-2.5 px-4 font-[family-name:var(--font-mono)] text-[13px]" style={{ color: "var(--fg-secondary)" }}>{r.path}</td>
                   <td className={`py-2.5 px-4 font-[family-name:var(--font-mono)] text-[13px] ${r.status_code < 400 ? "text-[#4ade80]" : "text-[#ffb4ab]"}`}>{r.status_code}</td>
-                  <td className="py-2.5 px-4 font-[family-name:var(--font-mono)] text-[13px] text-[#c7c4d7]">{r.latency_ms}ms</td>
+                  <td className="py-2.5 px-4 font-[family-name:var(--font-mono)] text-[13px]" style={{ color: "var(--fg-secondary)" }}>{r.latency_ms}ms</td>
                 </tr>
               ))}
             </tbody>
@@ -253,18 +254,18 @@ export default function DashboardPage() {
         </div>
 
         {/* System Status */}
-        <div className="bg-[#171717] border border-[#262626] rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#262626]">
-            <h3 className="text-[14px] leading-[20px] text-[#e5e2e1] font-semibold">System Status</h3>
+        <div className="t-card rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b" style={{ borderColor: "var(--border)" }}>
+            <h3 className="text-[14px] leading-[20px] font-semibold">System Status</h3>
           </div>
           <div className="divide-y divide-[#262626]">
             {loading ? (
-              <div className="px-4 py-6 text-center text-[#464554] text-[13px]">Checking...</div>
+              <div className="px-4 py-6 text-center text-[13px]" style={{ color: "var(--fg-muted)" }}>Checking...</div>
             ) : services.length === 0 ? (
-              <div className="px-4 py-6 text-center text-[#464554] text-[13px] font-[family-name:var(--font-mono)]">No services</div>
+              <div className="px-4 py-6 text-center text-[13px] font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>No services</div>
             ) : services.map((s, i) => (
               <div key={i} className="px-4 py-3 flex items-center justify-between">
-                <span className="text-[14px] text-[#e5e2e1]">{s.name}</span>
+                <span className="text-[14px]">{s.name}</span>
                 <div className="flex items-center gap-2">
                   <span className={`w-2 h-2 rounded-full ${statusColor[s.status] ?? "bg-[#908fa0]"}`} />
                   <span className={`font-[family-name:var(--font-mono)] text-[10px] tracking-[0.05em] font-bold capitalize ${statusTextColor[s.status] ?? "text-[#908fa0]"}`}>
@@ -274,7 +275,7 @@ export default function DashboardPage() {
               </div>
             ))}
             <div className="px-4 py-3">
-              <a href="#" className="text-[12px] text-[#c0c1ff] hover:text-[#494bd6] transition-colors flex items-center gap-1">
+              <a href="#" className="t-link text-[12px] transition-colors flex items-center gap-1">
                 View Status Page
                 <span className="material-symbols-outlined text-[14px]">open_in_new</span>
               </a>

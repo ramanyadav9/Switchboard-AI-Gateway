@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { conversations, chatStream } from "@/lib/api";
+import { conversations, chatStream, models as modelsApi } from "@/lib/api";
+import { useToast } from "@/components/toast";
 
 type Message = { id?: string; role: string; content: string; thinking?: string };
 
@@ -43,11 +44,11 @@ function ThinkingBlock({
           ? "Hide thinking"
           : "Thought for a moment"}
         {!isStreaming && (
-          <span className="text-[#464554]">({content.length} chars)</span>
+          <span style={{ color: "var(--fg-muted)" }}>({content.length} chars)</span>
         )}
       </button>
       {(open || isStreaming) && (
-        <div className="mt-2 px-3 py-2 bg-[#a855f7]/5 border border-[#a855f7]/10 rounded text-[11px] font-[family-name:var(--font-mono)] text-[#908fa0] leading-relaxed whitespace-pre-wrap max-h-48 overflow-auto">
+        <div className="mt-2 px-3 py-2 bg-[#a855f7]/5 border border-[#a855f7]/10 rounded text-[11px] font-[family-name:var(--font-mono)] leading-relaxed whitespace-pre-wrap max-h-48 overflow-auto" style={{ color: "var(--fg-muted)" }}>
           {content}
           {isStreaming && (
             <span className="inline-block w-1 h-3 bg-[#a855f7] ml-0.5 animate-pulse rounded-sm" />
@@ -67,17 +68,160 @@ function CopyButton({ text }: { text: string }) {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       }}
-      className="absolute top-2 right-2 text-[10px] font-[family-name:var(--font-mono)] text-[#908fa0] hover:text-[#e5e2e1] bg-[#171717] border border-[#262626] rounded px-1.5 py-0.5 transition opacity-0 group-hover:opacity-100"
+      className="absolute top-2 right-2 text-[10px] font-[family-name:var(--font-mono)] rounded px-1.5 py-0.5 transition opacity-0 group-hover:opacity-100"
+      style={{
+        color: "var(--fg-muted)",
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+      }}
     >
       {copied ? "Copied" : "Copy"}
     </button>
   );
 }
 
+/* ---- Markdown rendering ---- */
+
+function renderInline(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+
+    if (match[2]) {
+      parts.push(<strong key={match.index}>{match[2]}</strong>);
+    } else if (match[3]) {
+      parts.push(<em key={match.index}>{match[3]}</em>);
+    } else if (match[4]) {
+      parts.push(
+        <code
+          key={match.index}
+          className="px-1.5 py-0.5 rounded text-[13px] font-[family-name:var(--font-mono)]"
+          style={{ background: "var(--code-bg)", color: "var(--accent)" }}
+        >
+          {match[4]}
+        </code>
+      );
+    } else if (match[5] && match[6]) {
+      parts.push(
+        <a
+          key={match.index}
+          href={match[6]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline"
+          style={{ color: "var(--accent)" }}
+        >
+          {match[5]}
+        </a>
+      );
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : [text];
+}
+
+function InlineMarkdown({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let listItems: string[] = [];
+  let listType: "ul" | "ol" | null = null;
+
+  function flushList() {
+    if (listItems.length === 0) return;
+    const Tag = listType === "ol" ? "ol" : "ul";
+    elements.push(
+      <Tag
+        key={elements.length}
+        className={`my-2 pl-6 ${listType === "ol" ? "list-decimal" : "list-disc"}`}
+        style={{ color: "var(--fg-secondary)" }}
+      >
+        {listItems.map((item, j) => (
+          <li key={j} className="my-0.5">
+            {renderInline(item)}
+          </li>
+        ))}
+      </Tag>
+    );
+    listItems = [];
+    listType = null;
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Headings
+    const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      flushList();
+      const level = headingMatch[1].length;
+      const sizes = [
+        "text-xl font-bold",
+        "text-lg font-bold",
+        "text-base font-semibold",
+        "text-sm font-semibold",
+      ];
+      elements.push(
+        <div key={elements.length} className={`${sizes[level - 1]} mt-3 mb-1`}>
+          {renderInline(headingMatch[2])}
+        </div>
+      );
+      continue;
+    }
+
+    // Unordered list
+    if (/^[-*]\s+/.test(trimmed)) {
+      if (listType !== "ul") {
+        flushList();
+        listType = "ul";
+      }
+      listItems.push(trimmed.replace(/^[-*]\s+/, ""));
+      continue;
+    }
+
+    // Ordered list
+    const olMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (olMatch) {
+      if (listType !== "ol") {
+        flushList();
+        listType = "ol";
+      }
+      listItems.push(olMatch[1]);
+      continue;
+    }
+
+    flushList();
+
+    if (trimmed === "") {
+      elements.push(<div key={elements.length} className="h-2" />);
+    } else {
+      elements.push(
+        <span key={elements.length} className="block">
+          {renderInline(line)}
+        </span>
+      );
+    }
+  }
+  flushList();
+
+  return <>{elements}</>;
+}
+
 function MessageContent({ text }: { text: string }) {
   const parts = text.split(/(```[\s\S]*?```)/g);
   return (
-    <>
+    <div className="prose-sm">
       {parts.map((part, i) => {
         if (part.startsWith("```")) {
           const lines = part.slice(3, -3).split("\n");
@@ -86,10 +230,20 @@ function MessageContent({ text }: { text: string }) {
           return (
             <div
               key={i}
-              className="my-2 bg-[#050505] border border-[#262626] rounded overflow-hidden group relative"
+              className="my-2 rounded overflow-hidden group relative"
+              style={{
+                background: "var(--code-bg)",
+                border: "1px solid var(--border)",
+              }}
             >
               {lang && (
-                <div className="px-3 py-1 border-b border-[#262626] text-[10px] text-[#908fa0] font-[family-name:var(--font-mono)]">
+                <div
+                  className="px-3 py-1 text-[10px] font-[family-name:var(--font-mono)]"
+                  style={{
+                    borderBottom: "1px solid var(--border)",
+                    color: "var(--fg-muted)",
+                  }}
+                >
                   {lang}
                 </div>
               )}
@@ -100,23 +254,95 @@ function MessageContent({ text }: { text: string }) {
             </div>
           );
         }
-        return (
-          <span key={i} className="whitespace-pre-wrap">
-            {part}
-          </span>
-        );
+        return <InlineMarkdown key={i} text={part} />;
       })}
-    </>
+    </div>
   );
 }
+
+/* ---- Model selector ---- */
+
+function ModelSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (model: string) => void;
+}) {
+  const [modelList, setModelList] = useState<{ id: string }[]>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    modelsApi
+      .list()
+      .then((res: { data?: { id: string }[] }) => {
+        setModelList(res.data || []);
+      })
+      .catch(() => {});
+  }, []);
+
+  if (modelList.length === 0) return null;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-[family-name:var(--font-mono)] transition-colors hover:bg-white/5"
+        style={{
+          color: "var(--fg-muted)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <span className="material-symbols-outlined text-[14px]">model_training</span>
+        {value || "Select model"}
+        <span className="material-symbols-outlined text-[12px]">expand_more</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div
+            className="absolute top-full mt-1 left-0 z-20 min-w-[220px] rounded-lg shadow-lg py-1 max-h-60 overflow-auto"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            {modelList.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => {
+                  onChange(m.id);
+                  setOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 text-[12px] font-[family-name:var(--font-mono)] transition-colors hover:bg-white/5 flex items-center gap-2"
+                style={{
+                  color: m.id === value ? "var(--accent)" : "var(--fg-secondary)",
+                }}
+              >
+                {m.id === value && (
+                  <span className="material-symbols-outlined text-[14px]" style={{ color: "var(--accent)" }}>check</span>
+                )}
+                <span className={m.id === value ? "" : "ml-[22px]"}>{m.id}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---- Main page ---- */
 
 export default function ConversationPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const { toast } = useToast();
   const id = params.id as string;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [model, setModel] = useState("");
+  const [selectedModel, setSelectedModel] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [streaming, setStreaming] = useState(false);
@@ -130,7 +356,9 @@ export default function ConversationPage() {
     conversations
       .get(id)
       .then((data) => {
-        setModel(data.model || "");
+        const m = data.model || "";
+        setModel(m);
+        setSelectedModel(m);
         setMessages(
           (data.messages || []).map(
             (m: { id: string; role: string; content: string; thinking?: string }) => ({
@@ -149,9 +377,11 @@ export default function ConversationPage() {
           promptApplied.current = true;
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        toast("Failed to load conversation", "error");
+      })
       .finally(() => setLoading(false));
-  }, [id, searchParams]);
+  }, [id, searchParams, toast]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -174,15 +404,19 @@ export default function ConversationPage() {
     abortRef.current = controller;
 
     try {
-      const res = await chatStream(
-        { conversation_id: id, content: userMsg.content },
-      );
+      const res = await chatStream({
+        conversation_id: id,
+        content: userMsg.content,
+        ...(selectedModel && selectedModel !== model ? { model: selectedModel } : {}),
+      });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
+        const errMsg = err.detail || err.text || "Request failed";
+        toast(`Error: ${errMsg}`, "error");
         setMessages([
           ...updated,
-          { role: "assistant", content: `Error: ${err.detail || err.text || "Request failed"}` },
+          { role: "assistant", content: `Error: ${errMsg}` },
         ]);
         setStreaming(false);
         return;
@@ -237,6 +471,7 @@ export default function ConversationPage() {
               setStreamContent("");
               setStreamThinking("");
             } else if (msg.type === "error") {
+              toast(`Stream error: ${msg.text}`, "error");
               setMessages([
                 ...updated,
                 { role: "assistant", content: `Error: ${msg.text}` },
@@ -252,6 +487,7 @@ export default function ConversationPage() {
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
         const msg = err instanceof Error ? err.message : "Unknown error";
+        toast(`Error: ${msg}`, "error");
         setMessages([
           ...updated,
           { role: "assistant", content: `Error: ${msg}` },
@@ -285,7 +521,7 @@ export default function ConversationPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-[#908fa0]">
+      <div className="flex-1 flex items-center justify-center" style={{ color: "var(--fg-muted)" }}>
         <svg
           className="animate-spin h-5 w-5 mr-2"
           viewBox="0 0 24 24"
@@ -312,6 +548,28 @@ export default function ConversationPage() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Header with model selector */}
+      <div
+        className="flex items-center justify-between px-4 py-2 shrink-0"
+        style={{ borderBottom: "1px solid var(--border)" }}
+      >
+        <ModelSelector
+          value={selectedModel}
+          onChange={setSelectedModel}
+        />
+        {selectedModel && selectedModel !== model && (
+          <span
+            className="text-[11px] font-[family-name:var(--font-mono)] px-2 py-0.5 rounded"
+            style={{
+              color: "var(--accent)",
+              background: "var(--accent-subtle)",
+            }}
+          >
+            Model override active
+          </span>
+        )}
+      </div>
+
       {/* Messages */}
       <div
         ref={scrollRef}
@@ -319,7 +577,7 @@ export default function ConversationPage() {
       >
         <div className="max-w-3xl mx-auto space-y-5">
           {messages.length === 0 && !streaming && (
-            <div className="flex flex-col items-center justify-center h-[60vh] text-[#464554]">
+            <div className="flex flex-col items-center justify-center h-[60vh]" style={{ color: "var(--fg-muted)" }}>
               <span className="material-symbols-outlined text-[48px] mb-3">
                 forum
               </span>
@@ -332,22 +590,35 @@ export default function ConversationPage() {
               key={m.id || i}
               className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} animate-fade-in`}
             >
-              <div className={`max-w-[85%] ${m.role === "user" ? "" : ""}`}>
+              <div className="max-w-[85%]">
                 {m.role === "assistant" && m.thinking && (
                   <ThinkingBlock content={m.thinking} />
                 )}
                 {m.role === "assistant" && (
                   <div className="flex items-center gap-2 mb-1.5">
-                    <div className="w-5 h-5 rounded bg-[#c0c1ff] flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-[12px] text-[#1000a9]">
+                    <div
+                      className="w-5 h-5 rounded flex items-center justify-center shrink-0"
+                      style={{ background: "var(--accent-subtle)" }}
+                    >
+                      <span
+                        className="material-symbols-outlined text-[12px]"
+                        style={{ color: "var(--accent)" }}
+                      >
                         smart_toy
                       </span>
                     </div>
-                    <span className="text-[12px] text-[#c7c4d7]">
+                    <span className="text-[12px]" style={{ color: "var(--fg-secondary)" }}>
                       Assistant
                     </span>
                     {model && (
-                      <span className="font-[family-name:var(--font-mono)] text-[10px] text-[#464554] bg-[#171717] border border-[#262626] rounded px-1.5 py-0.5">
+                      <span
+                        className="font-[family-name:var(--font-mono)] text-[10px] rounded px-1.5 py-0.5"
+                        style={{
+                          color: "var(--fg-muted)",
+                          background: "var(--surface)",
+                          border: "1px solid var(--border)",
+                        }}
+                      >
                         {model}
                       </span>
                     )}
@@ -355,10 +626,16 @@ export default function ConversationPage() {
                 )}
                 <div
                   className={`px-4 py-3 rounded-xl text-[14px] leading-[22px] ${
-                    m.role === "user"
-                      ? "bg-[#6366f1] text-white rounded-br-sm"
-                      : "bg-[#171717] border border-[#262626] text-[#e5e2e1]"
+                    m.role === "user" ? "text-white rounded-br-sm" : ""
                   }`}
+                  style={
+                    m.role === "user"
+                      ? { background: "var(--accent)" }
+                      : {
+                          background: "var(--surface)",
+                          border: "1px solid var(--border)",
+                        }
+                  }
                 >
                   <MessageContent text={m.content} />
                 </div>
@@ -379,23 +656,38 @@ export default function ConversationPage() {
                 {streamContent && (
                   <>
                     <div className="flex items-center gap-2 mb-1.5">
-                      <div className="w-5 h-5 rounded bg-[#c0c1ff] flex items-center justify-center shrink-0">
-                        <span className="material-symbols-outlined text-[12px] text-[#1000a9]">
+                      <div
+                        className="w-5 h-5 rounded flex items-center justify-center shrink-0"
+                        style={{ background: "var(--accent-subtle)" }}
+                      >
+                        <span
+                          className="material-symbols-outlined text-[12px]"
+                          style={{ color: "var(--accent)" }}
+                        >
                           smart_toy
                         </span>
                       </div>
-                      <span className="text-[12px] text-[#c7c4d7]">
+                      <span className="text-[12px]" style={{ color: "var(--fg-secondary)" }}>
                         Assistant
                       </span>
                     </div>
-                    <div className="px-4 py-3 rounded-xl text-[14px] leading-[22px] bg-[#171717] border border-[#262626] text-[#e5e2e1]">
+                    <div
+                      className="px-4 py-3 rounded-xl text-[14px] leading-[22px]"
+                      style={{
+                        background: "var(--surface)",
+                        border: "1px solid var(--border)",
+                      }}
+                    >
                       <MessageContent text={streamContent} />
-                      <span className="inline-block w-1.5 h-4 bg-[#c0c1ff] ml-0.5 animate-pulse rounded-sm" />
+                      <span
+                        className="inline-block w-1.5 h-4 ml-0.5 animate-pulse rounded-sm"
+                        style={{ background: "var(--accent)" }}
+                      />
                     </div>
                   </>
                 )}
                 {!streamContent && !streamThinking && (
-                  <div className="flex items-center gap-2 text-[#908fa0] text-[13px]">
+                  <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--fg-muted)" }}>
                     <svg
                       className="animate-spin h-4 w-4"
                       viewBox="0 0 24 24"
@@ -424,7 +716,7 @@ export default function ConversationPage() {
 
           {streaming && !streamContent && !streamThinking && (
             <div className="flex justify-start animate-fade-in">
-              <div className="flex items-center gap-2 text-[#908fa0] text-[13px]">
+              <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--fg-muted)" }}>
                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
                   <circle
                     className="opacity-25"
@@ -449,9 +741,15 @@ export default function ConversationPage() {
       </div>
 
       {/* Input */}
-      <div className="border-t border-[#262626] bg-[#131313] p-4">
+      <div className="p-4" style={{ borderTop: "1px solid var(--border)", background: "var(--bg)" }}>
         <div className="max-w-3xl mx-auto">
-          <div className="flex items-end gap-2 bg-[#0a0a0a] border border-[#262626] rounded-xl px-4 py-2 focus-within:border-[#6366f1] transition-colors">
+          <div
+            className="flex items-end gap-2 rounded-xl px-4 py-2 transition-colors"
+            style={{
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+            }}
+          >
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -462,10 +760,10 @@ export default function ConversationPage() {
                 }
               }}
               rows={1}
-              className="flex-1 bg-transparent py-1.5 text-[14px] text-[#e5e2e1] placeholder:text-[#464554] focus:outline-none resize-none max-h-[150px]"
+              className="flex-1 bg-transparent py-1.5 text-[14px] focus:outline-none resize-none max-h-[150px]"
+              style={{ color: "var(--fg)" }}
               placeholder="Message Switchboard..."
               disabled={streaming}
-              style={{ minHeight: "24px" }}
               onInput={(e) => {
                 const el = e.target as HTMLTextAreaElement;
                 el.style.height = "auto";
@@ -485,7 +783,7 @@ export default function ConversationPage() {
               <button
                 onClick={send}
                 disabled={!input.trim()}
-                className="bg-[#6366f1] hover:bg-[#4f46e5] text-white w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
+                className="t-btn w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
               >
                 <span className="material-symbols-outlined text-[18px]">
                   arrow_upward
@@ -493,7 +791,10 @@ export default function ConversationPage() {
               </button>
             )}
           </div>
-          <div className="flex items-center justify-center gap-3 mt-2 text-[11px] text-[#464554] font-[family-name:var(--font-mono)]">
+          <div
+            className="flex items-center justify-center gap-3 mt-2 text-[11px] font-[family-name:var(--font-mono)]"
+            style={{ color: "var(--fg-muted)" }}
+          >
             <span>Shift + Enter for new line</span>
             <span>&middot;</span>
             <span>Switchboard can make mistakes</span>

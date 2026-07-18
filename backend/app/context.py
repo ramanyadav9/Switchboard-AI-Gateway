@@ -57,7 +57,7 @@ def build_prompt(
     conversation: Conversation,
     new_message: str,
     db: Session,
-    max_tokens: int = 28000,
+    max_tokens: int = 6144,
 ) -> ChatContext:
     budget = max_tokens
     was_truncated = False

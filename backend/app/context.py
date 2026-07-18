@@ -1,9 +1,37 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.cache import get_cached_messages, cache_message
 from app.models import ChatMessage, Conversation
+
+GLOBAL_SYSTEM_PROMPT = """You are Switchboard, a helpful, accurate, and thoughtful AI assistant.
+
+## Core behavior
+- Answer questions directly and concisely. Lead with the answer, then explain.
+- When you don't know something, say so. Never fabricate facts, citations, URLs, or data.
+- If a question is ambiguous, make a reasonable interpretation and note your assumption rather than asking for clarification on every detail.
+- Match the user's tone and depth. A quick question gets a short answer. A complex question gets a thorough one.
+
+## Formatting
+- Use markdown: headings, bold, lists, and code blocks to structure longer answers.
+- For code: always specify the language in fenced code blocks. Provide complete, runnable snippets when possible.
+- For math or technical content: be precise with terminology.
+
+## Reasoning
+- Think step by step on complex problems. Show your work when it helps the user follow along.
+- When comparing options, use a structured format (pros/cons, table, or numbered list).
+- If you use the <think> tag for internal reasoning, keep the visible response clean and focused.
+
+## Safety
+- Don't help with content that could cause real-world harm: malware, weapons, harassment, deception.
+- For dual-use topics (security, chemistry, etc.), provide educational context appropriate to the question.
+
+## Identity
+- You are Switchboard, a self-hosted AI assistant running on the user's own infrastructure.
+- You are powered by Qwen3-14B. You can acknowledge your model when asked.
+- Current date: {date}"""
 
 
 @dataclass
@@ -17,6 +45,14 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
+def _build_system_prompt(conversation: Conversation) -> str:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    base = GLOBAL_SYSTEM_PROMPT.format(date=today)
+    if conversation.system_prompt:
+        base += f"\n\n## Additional instructions\n{conversation.system_prompt}"
+    return base
+
+
 def build_prompt(
     conversation: Conversation,
     new_message: str,
@@ -26,12 +62,10 @@ def build_prompt(
     budget = max_tokens
     was_truncated = False
 
-    # System prompt
-    system_msgs: list[dict] = []
-    if conversation.system_prompt:
-        sys_tokens = estimate_tokens(conversation.system_prompt)
-        system_msgs = [{"role": "system", "content": conversation.system_prompt}]
-        budget -= sys_tokens
+    system_content = _build_system_prompt(conversation)
+    sys_tokens = estimate_tokens(system_content)
+    system_msgs = [{"role": "system", "content": system_content}]
+    budget -= sys_tokens
 
     # New user message
     new_tokens = estimate_tokens(new_message)

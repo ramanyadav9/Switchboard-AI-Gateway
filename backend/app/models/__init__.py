@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -47,7 +47,7 @@ class Conversation(Base):
     model: Mapped[str] = mapped_column(String, nullable=False)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    is_archived: Mapped[bool] = mapped_column(Integer, default=False)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

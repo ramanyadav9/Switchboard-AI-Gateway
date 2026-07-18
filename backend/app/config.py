@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     VLLM_TTS_BASE_URL: str = "http://localhost:8002"
     SENSEVOICE_BASE_URL: str = "http://localhost:8006"
     VLLM_API_KEY: str = "vaani-local-key"
+
+    # SearXNG (web search)
+    SEARXNG_URL: str = "http://localhost:8888"
     
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]

@@ -68,6 +68,39 @@ class ChatMessage(Base):
     )
 
 
+class Skill(Base):
+    __tablename__ = "skills"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String, default="general")
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    usage_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class ResearchTask(Base):
+    __tablename__ = "research_tasks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    conversation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="planning")
+    current_round: Mapped[int] = mapped_column(Integer, default=0)
+    max_rounds: Mapped[int] = mapped_column(Integer, default=5)
+    sources_count: Mapped[int] = mapped_column(Integer, default=0)
+    report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    findings: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class RequestLog(Base):
     __tablename__ = "request_logs"
 

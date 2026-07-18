@@ -34,6 +34,7 @@ services:
       - VLLM_TTS_BASE_URL=http://localhost:8002
       - VLLM_API_KEY=${VLLM_API_KEY:-vaani-local-key}
       - DEFAULT_MODEL=Qwen3-14B
+      - SEARXNG_URL=http://localhost:8888
       - CORS_ORIGINS=["*"]
     depends_on:
       postgres:
@@ -69,6 +70,16 @@ services:
     depends_on:
       - backend
       - frontend
+
+  searxng:
+    image: searxng/searxng
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config/searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888
+      - BIND_ADDRESS=0.0.0.0:8888
 
   redis:
     image: redis:7-alpine

@@ -100,3 +100,34 @@ export const translate = {
       body: JSON.stringify({ text, target_language }),
     }),
 };
+
+export const skills = {
+  list: () => apiFetch("/me/skills"),
+  create: (data: { name: string; description: string; content: string; category?: string }) =>
+    apiFetch("/me/skills", { method: "POST", body: JSON.stringify(data) }),
+  get: (id: string) => apiFetch(`/me/skills/${id}`),
+  update: (id: string, data: { name?: string; description?: string; content?: string; category?: string }) =>
+    apiFetch(`/me/skills/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  delete: (id: string) => apiFetch(`/me/skills/${id}`, { method: "DELETE" }),
+};
+
+export const search = {
+  web: (query: string, num_results: number = 10) =>
+    apiFetch("/me/search", { method: "POST", body: JSON.stringify({ query, num_results }) }),
+  fetch: (url: string) =>
+    apiFetch("/me/fetch", { method: "POST", body: JSON.stringify({ url }) }),
+};
+
+export const research = {
+  start: (query: string, conversation_id?: string) =>
+    apiFetch("/me/research", { method: "POST", body: JSON.stringify({ query, conversation_id }) }),
+  list: () => apiFetch("/me/research"),
+  get: (id: string) => apiFetch(`/me/research/${id}`),
+  cancel: (id: string) => apiFetch(`/me/research/${id}/cancel`, { method: "POST" }),
+  stream: (id: string) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    return fetch(`${API_BASE}/me/research/${id}/stream`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+  },
+};

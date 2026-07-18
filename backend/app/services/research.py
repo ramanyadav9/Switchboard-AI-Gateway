@@ -224,6 +224,20 @@ class ResearchEngine:
             )
 
             await self._update_status("done", report=final)
+
+            try:
+                from app.services.rag import index_content
+                db = SessionLocal()
+                try:
+                    index_content(
+                        db, self.user_id, "research",
+                        self.research_id, self.query, final,
+                    )
+                finally:
+                    db.close()
+            except Exception:
+                pass
+
             return final
 
         except Exception as e:

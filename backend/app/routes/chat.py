@@ -16,7 +16,7 @@ from app.cache import (
     incr_active_generations, decr_active_generations,
 )
 from app.config import get_settings
-from app.context import build_prompt, estimate_tokens
+from app.context import build_prompt, build_summary_messages, estimate_tokens, should_summarize
 from app.db import SessionLocal, get_db
 from app.models import ApiKey, ChatMessage, Conversation, User
 from app.ratelimit import rpm_limit_for
@@ -58,6 +58,50 @@ def _save_message(conversation_id: str, role: str, content: str, thinking: str |
     finally:
         db.close()
     cache_message(conversation_id, role, content, thinking, token_count)
+
+
+def _maybe_summarize(conversation_id: str, http_client):
+    db = SessionLocal()
+    try:
+        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if not conv:
+            return
+        msg_count = db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation_id).count()
+        if not should_summarize(conv, msg_count):
+            return
+        prompt = build_summary_messages(conversation_id, db)
+        if not prompt:
+            return
+
+        import httpx as _httpx
+        with _httpx.Client(timeout=60.0) as client:
+            resp = client.post(
+                f"{settings.VLLM_LLM_BASE_URL}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.VLLM_API_KEY}"},
+                json={
+                    "model": settings.DEFAULT_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2,
+                    "max_tokens": 512,
+                },
+            )
+            if resp.status_code == 200:
+                summary = resp.json()["choices"][0]["message"]["content"].strip()
+                import re
+                summary = re.sub(r"<think>[\s\S]*?</think>\s*", "", summary).strip()
+                conv.summary = summary
+                conv.summary_up_to = msg_count
+                db.commit()
+
+                try:
+                    from app.services.rag import index_content
+                    index_content(db, conv.user_id, "chat_summary", conversation_id, conv.title or "Chat", summary)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    finally:
+        db.close()
 
 
 def _auto_title(conversation_id: str, user_message: str):
@@ -212,6 +256,7 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
     loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
     loop.run_in_executor(None, _auto_title, conversation_id, user_content)
+    loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'latency_ms': latency_ms}})}\n\n"
 

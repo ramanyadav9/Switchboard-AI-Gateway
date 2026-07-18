@@ -25,4 +25,10 @@ def get_db():
 def init_db() -> None:
     import app.models  # noqa: F401  (ensures models are registered on Base)
 
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+
     Base.metadata.create_all(bind=engine)

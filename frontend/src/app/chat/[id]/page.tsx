@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { conversations, chatStream } from "@/lib/api";
 
 type Message = { id?: string; role: string; content: string; thinking?: string };
@@ -112,6 +112,7 @@ function MessageContent({ text }: { text: string }) {
 
 export default function ConversationPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const id = params.id as string;
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -123,6 +124,7 @@ export default function ConversationPage() {
   const [streamThinking, setStreamThinking] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const promptApplied = useRef(false);
 
   useEffect(() => {
     conversations
@@ -139,10 +141,17 @@ export default function ConversationPage() {
             })
           )
         );
+        if (!promptApplied.current) {
+          const prompt = searchParams.get("prompt");
+          if (prompt && (data.messages || []).length === 0) {
+            setInput(prompt);
+          }
+          promptApplied.current = true;
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, searchParams]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({

@@ -57,18 +57,18 @@ export default function ChatPage() {
 
         <div className="mt-10 grid grid-cols-2 gap-3">
           {[
-            { icon: "code", text: "Write code", prompt: "Help me write a Python script that..." },
-            { icon: "school", text: "Explain a concept", prompt: "Explain how..." },
-            { icon: "translate", text: "Translate text", prompt: "Translate the following to..." },
-            { icon: "edit_note", text: "Summarize text", prompt: "Summarize this document..." },
+            { icon: "code", text: "Write code", prompt: "Help me write a Python script that " },
+            { icon: "school", text: "Explain a concept", prompt: "Explain how " },
+            { icon: "translate", text: "Translate text", prompt: "Translate the following to English:\n\n" },
+            { icon: "edit_note", text: "Summarize text", prompt: "Summarize this:\n\n" },
           ].map((s) => (
             <button
               key={s.icon}
               onClick={async () => {
                 setCreating(true);
                 try {
-                  const conv = await conversations.create({ title: s.text });
-                  router.push(`/chat/${conv.id}`);
+                  const conv = await conversations.create();
+                  router.push(`/chat/${conv.id}?prompt=${encodeURIComponent(s.prompt)}`);
                 } catch { setCreating(false); }
               }}
               className="flex items-center gap-2 px-3 py-2.5 bg-[#171717] hover:bg-[#1c1c22] border border-[#262626] hover:border-[#464554] rounded-lg transition-colors text-left"

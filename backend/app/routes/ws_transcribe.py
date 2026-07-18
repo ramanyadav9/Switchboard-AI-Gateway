@@ -11,9 +11,10 @@ router = APIRouter()
 settings = get_settings()
 
 STT_HOST = settings.VLLM_STT_BASE_URL.replace("http://", "").rstrip("/")
+SENSEVOICE_HOST = getattr(settings, "SENSEVOICE_BASE_URL", "http://localhost:8006").replace("http://", "").rstrip("/")
 ENGINES = {
     "whisper": {"url": f"ws://{STT_HOST}/asr", "protocol": "whisperlivekit"},
-    "sensevoice": {"url": "ws://164.52.194.98:8006", "protocol": "funasr"},
+    "sensevoice": {"url": f"ws://{SENSEVOICE_HOST}", "protocol": "funasr"},
 }
 
 

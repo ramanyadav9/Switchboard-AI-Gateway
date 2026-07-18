@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-On your GPU server (164.52.194.98):
+On your GPU server:
 - Docker & Docker Compose installed
 - GPU services already running:
   - Qwen3-14B LLM on port 8000

@@ -2,7 +2,7 @@
 
 ## Current State
 - **Developing on**: Windows laptop
-- **GPU Server**: 164.52.194.98 (vLLM endpoints on different ports)
+- **GPU Server**: your-gpu-server (vLLM endpoints on different ports)
 - **Goal**: Build & test locally → Ship to production server
 
 ---
@@ -36,9 +36,9 @@ model-backend/
 ```env
 # .env (local development)
 # Point to remote GPU server
-VLLM_LLM_BASE_URL=http://164.52.194.98:8000
-VLLM_STT_BASE_URL=http://164.52.194.98:8001
-VLLM_TTS_BASE_URL=http://164.52.194.98:8002
+VLLM_LLM_BASE_URL=http://your-gpu-server:8000
+VLLM_STT_BASE_URL=http://your-gpu-server:8001
+VLLM_TTS_BASE_URL=http://your-gpu-server:8002
 
 # LiteLLM
 LITELLM_MASTER_KEY=sk-your-master-key-here
@@ -83,19 +83,19 @@ model_list:
   - model_name: gpt-3.5-turbo  # Alias for OpenAI SDK compatibility
     litellm_params:
       model: openai/qwen3-14b-fp8
-      api_base: http://164.52.194.98:8000
+      api_base: http://your-gpu-server:8000
       api_key: os.environ/VLLM_API_KEY
       
   - model_name: whisper-large-v3
     litellm_params:
       model: openai/whisper-large-v3-turbo
-      api_base: http://164.52.194.98:8001
+      api_base: http://your-gpu-server:8001
       api_key: os.environ/VLLM_API_KEY
       
   - model_name: tts-1
     litellm_params:
       model: openai/kokoro-82m
-      api_base: http://164.52.194.98:8002
+      api_base: http://your-gpu-server:8002
       api_key: os.environ/VLLM_API_KEY
 ```
 
@@ -172,7 +172,7 @@ services:
 
 ## Phase 7: Production Deployment - Day 16+
 
-### 7.1 Server Setup (164.52.194.98)
+### 7.1 Server Setup (your-gpu-server)
 ```bash
 # On the GPU server
 git clone <repo>
@@ -222,7 +222,7 @@ server {
 2. **Set up Python environment** with uv (modern toolchain)
 3. **Initialize Next.js** with TypeScript + Tailwind
 4. **Create Docker Compose** for local dev
-5. **Test connectivity** to 164.52.194.98 from your laptop
+5. **Test connectivity** to your-gpu-server from your laptop
 
 Want me to start executing this plan? I can begin with:
 - Setting up the project structure

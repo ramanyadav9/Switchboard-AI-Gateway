@@ -2,13 +2,13 @@ model_list:
   - model_name: gpt-3.5-turbo
     litellm_params:
       model: openai/qwen3-14b-fp8
-      api_base: http://164.52.194.98:8000
+      api_base: http://localhost:8000
       api_key: os.environ/VLLM_API_KEY
 
   - model_name: whisper-large-v3-turbo
     litellm_params:
       model: openai/whisper-large-v3-turbo
-      api_base: http://164.52.194.98:8004
+      api_base: http://localhost:8004
       api_key: os.environ/VLLM_API_KEY
 
 litellm_settings:

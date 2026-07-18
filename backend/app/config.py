@@ -26,10 +26,11 @@ class Settings(BaseSettings):
     # Default model served by the gateway (vLLM serves Qwen3-14B, not gpt-3.5-turbo)
     DEFAULT_MODEL: str = "Qwen3-14B"
     
-    # vLLM endpoints (remote GPU server)
-    VLLM_LLM_BASE_URL: str = "http://164.52.194.98:8000"
-    VLLM_STT_BASE_URL: str = "http://164.52.194.98:8004"
-    VLLM_TTS_BASE_URL: str = "http://164.52.194.98:8002"
+    # vLLM endpoints (set via env vars in docker-compose)
+    VLLM_LLM_BASE_URL: str = "http://localhost:8000"
+    VLLM_STT_BASE_URL: str = "http://localhost:8004"
+    VLLM_TTS_BASE_URL: str = "http://localhost:8002"
+    SENSEVOICE_BASE_URL: str = "http://localhost:8006"
     VLLM_API_KEY: str = "vaani-local-key"
     
     # CORS

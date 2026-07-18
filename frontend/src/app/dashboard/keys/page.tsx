@@ -12,9 +12,12 @@ function CodeSnippets({ apiKey }: { apiKey: string }) {
   const [lang, setLang] = useState<SnippetLang>("curl");
   const [copied, setCopied] = useState(false);
 
+  const BASE_URL = typeof window !== "undefined" ? window.location.origin : "https://your-server";
+  const WS_URL = BASE_URL.replace(/^http/, "ws");
+
   const snippets: Record<SnippetMode, Record<SnippetLang, string>> = {
     chat: {
-      curl: `curl http://localhost:8080/v1/chat/completions \\
+      curl: `curl ${BASE_URL}/v1/chat/completions \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -24,7 +27,7 @@ function CodeSnippets({ apiKey }: { apiKey: string }) {
       python: `from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8080/v1",
+    base_url="${BASE_URL}/v1",
     api_key="${apiKey}"
 )
 
@@ -36,7 +39,7 @@ print(response.choices[0].message.content)`,
       node: `import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "http://localhost:8080/v1",
+  baseURL: "${BASE_URL}/v1",
   apiKey: "${apiKey}",
 });
 
@@ -48,14 +51,14 @@ console.log(response.choices[0].message.content);`,
     },
     stt: {
       curl: `# Transcribe an audio file
-curl http://localhost:8080/v1/audio/transcriptions \\
+curl ${BASE_URL}/v1/audio/transcriptions \\
   -H "Authorization: Bearer ${apiKey}" \\
   -F file=@audio.wav \\
   -F model=whisper-large-v3-turbo`,
       python: `from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8080/v1",
+    base_url="${BASE_URL}/v1",
     api_key="${apiKey}"
 )
 
@@ -69,7 +72,7 @@ print(transcript.text)`,
 import fs from "fs";
 
 const client = new OpenAI({
-  baseURL: "http://localhost:8080/v1",
+  baseURL: "${BASE_URL}/v1",
   apiKey: "${apiKey}",
 });
 
@@ -82,17 +85,17 @@ console.log(transcript.text);`,
     realtime: {
       curl: `# WebSocket real-time transcription
 # Connect with your API key as token:
-# ws://localhost:8080/ws/transcribe?token=${apiKey}
+# ${WS_URL}/ws/transcribe?token=${apiKey}
 
 # Test with websocat:
 echo '{"action":"stop"}' | websocat \\
-  "ws://localhost:8080/ws/transcribe?token=${apiKey}"`,
+  "${WS_URL}/ws/transcribe?token=${apiKey}"`,
       python: `import asyncio
 import websockets
 import pyaudio
 
 API_KEY = "${apiKey}"
-WS_URL = f"ws://localhost:8080/ws/transcribe?token={API_KEY}"
+WS_URL = f"${WS_URL}/ws/transcribe?token={API_KEY}"
 
 async def live_transcribe():
     async with websockets.connect(WS_URL) as ws:
@@ -125,7 +128,7 @@ const WebSocket = require("ws");
 
 const API_KEY = "${apiKey}";
 const ws = new WebSocket(
-  \`ws://localhost:8080/ws/transcribe?token=\${API_KEY}\`
+  \`${WS_URL}/ws/transcribe?token=\${API_KEY}\`
 );
 
 ws.on("open", () => {

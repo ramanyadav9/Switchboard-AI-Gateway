@@ -124,7 +124,7 @@ export default function DocsPage() {
               </span>
             </div>
             <div className="p-4 bg-[#050505] overflow-x-auto">
-              <pre className="font-[family-name:var(--font-mono)] text-[13px] leading-[20px] text-[#c7c4d7]">{`curl http://localhost:8080/v1/chat/completions \\
+              <pre className="font-[family-name:var(--font-mono)] text-[13px] leading-[20px] text-[#c7c4d7]">{`curl https://your-server/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $SWITCHBOARD_API_KEY" \\
   -d '{

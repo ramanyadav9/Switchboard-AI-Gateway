@@ -12,6 +12,6 @@ COPY . .
 
 RUN uv sync --no-dev
 
-EXPOSE 8080
+EXPOSE 8081
 
-CMD ["uv", "run", "gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080", "--graceful-timeout", "30", "--timeout", "300"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "2", "--timeout-graceful-shutdown", "30"]

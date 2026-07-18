@@ -1,6 +1,6 @@
 # Switchboard API Reference
 
-Base URL: `https://your-server.com` (or `http://164.52.194.98` for local)
+Base URL: `https://your-server.com`
 
 ## Authentication
 

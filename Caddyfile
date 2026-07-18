@@ -1,34 +1,32 @@
+{
+	admin localhost:2018
+}
+
 :2341 {
-	# API routes → backend (port 8080)
 	handle /auth/* {
-		reverse_proxy localhost:8080
+		reverse_proxy localhost:8081
 	}
 
 	handle /me/* {
-		reverse_proxy localhost:8080
+		reverse_proxy localhost:8081
 	}
 
 	handle /v1/* {
-		reverse_proxy localhost:8080
+		reverse_proxy localhost:8081
 	}
 
 	handle /health {
-		reverse_proxy localhost:8080
+		reverse_proxy localhost:8081
 	}
 
-	# WebSocket transcription → backend
 	handle /ws/* {
-		reverse_proxy localhost:8080
+		reverse_proxy localhost:8081
 	}
 
-	# Root API info
-	handle /api {
-		reverse_proxy localhost:8080 {
-			rewrite * /
-		}
+	handle_path /api {
+		reverse_proxy localhost:8081
 	}
 
-	# Everything else → frontend (port 3000)
 	handle {
 		reverse_proxy localhost:3000
 	}

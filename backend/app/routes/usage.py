@@ -179,7 +179,7 @@ async def translate_text(
 @router.get("/status", response_model=StatusResponse)
 async def get_status():
     services = [
-        ("API Gateway", "http://localhost:8080/health"),
+        ("API Gateway", "http://localhost:8081/health"),
         ("LLM (Qwen3-14B)", f"{settings.VLLM_LLM_BASE_URL}/v1/models"),
         ("STT (Whisper)", f"{settings.VLLM_STT_BASE_URL}/v1/models"),
     ]

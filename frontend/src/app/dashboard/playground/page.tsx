@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 type Tab = "chat" | "stt";
 type Message = { role: string; content: string; thinking?: string };

@@ -101,79 +101,8 @@ function ChatPlayground() {
   const [temperature, setTemperature] = useState(0.7);
   const [maxLength, setMaxLength] = useState(2048);
   const [topP, setTopP] = useState(1.0);
-  const [wsConnected, setWsConnected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const chatWsRef = useRef<WebSocket | null>(null);
-  const pendingRef = useRef<{ allMessages: Message[]; rawContent: string; rawThinking: string } | null>(null);
-
-  const WS_CHAT = API_BASE.replace(/^http/, "ws") + "/ws/chat";
-
-  function connectWs() {
-    if (chatWsRef.current?.readyState === WebSocket.OPEN) return;
-    const token = localStorage.getItem("token") || "";
-    const ws = new WebSocket(`${WS_CHAT}?token=${token}`);
-    chatWsRef.current = ws;
-
-    ws.onopen = () => setWsConnected(true);
-    ws.onclose = () => setWsConnected(false);
-
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-
-      if (msg.type === "ping") {
-        ws.send(JSON.stringify({ type: "pong" }));
-        return;
-      }
-
-      if (msg.type === "timeout") {
-        setWsConnected(false);
-        return;
-      }
-
-      const p = pendingRef.current;
-      if (!p) return;
-
-      if (msg.type === "token") {
-        if (msg.reasoning) p.rawThinking += msg.reasoning;
-        if (msg.content) p.rawContent += msg.content;
-
-        const parsed = parseThinkTags(p.rawContent);
-        const thinking = p.rawThinking || parsed.thinking;
-        const content = parsed.content;
-
-        if (thinking) setStreamingThinking(thinking);
-        if (content) setStreaming(content);
-        else if (p.rawContent && parsed.thinking) setStreaming("");
-      } else if (msg.type === "done") {
-        const parsed = parseThinkTags(p.rawContent);
-        const finalThinking = p.rawThinking || parsed.thinking;
-        const finalContent = parsed.content || p.rawContent;
-
-        setMessages([...p.allMessages, {
-          role: "assistant",
-          content: finalContent || "No response",
-          thinking: finalThinking || undefined,
-        }]);
-        setStreaming("");
-        setStreamingThinking("");
-        setLoading(false);
-        pendingRef.current = null;
-      } else if (msg.type === "error") {
-        setMessages([...p.allMessages, { role: "assistant", content: `Error: ${msg.text}` }]);
-        setStreaming("");
-        setStreamingThinking("");
-        setLoading(false);
-        pendingRef.current = null;
-      }
-    };
-  }
-
-  function ensureConnected(): boolean {
-    const ws = chatWsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) return true;
-    connectWs();
-    return false;
-  }
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -184,23 +113,14 @@ function ChatPlayground() {
         if (ids.length) { setModels(ids); setModel(ids[0]); }
       } catch { /* keep default */ }
     })();
-    connectWs();
-    return () => { chatWsRef.current?.close(); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, streaming, streamingThinking]);
 
-  function send() {
+  async function send() {
     if (!input.trim() || loading) return;
-    if (!ensureConnected()) {
-      setTimeout(() => send(), 500);
-      return;
-    }
-    const ws = chatWsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     const userMsg: Message = { role: "user", content: input };
     const systemMsgs: { role: string; content: string }[] = systemPrompt
@@ -213,16 +133,93 @@ function ChatPlayground() {
     setStreaming("");
     setStreamingThinking("");
 
-    pendingRef.current = { allMessages, rawContent: "", rawThinking: "" };
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    ws.send(JSON.stringify({
-      model,
-      messages: [...systemMsgs, ...allMessages],
-      stream: true,
-      temperature,
-      max_tokens: maxLength,
-      top_p: topP,
-    }));
+    try {
+      const res = await fetch(`${API_BASE}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          model,
+          messages: [...systemMsgs, ...allMessages.map(m => ({ role: m.role, content: m.content }))],
+          stream: true,
+          temperature,
+          max_tokens: maxLength,
+          top_p: topP,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        setMessages([...allMessages, { role: "assistant", content: `Error: ${err.detail || "Request failed"}` }]);
+        setLoading(false);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let rawContent = "";
+      let rawThinking = "";
+
+      while (true) {
+        if (controller.signal.aborted) break;
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta;
+            if (delta?.content) rawContent += delta.content;
+            if (delta?.reasoning_content) rawThinking += delta.reasoning_content;
+
+            const tp = parseThinkTags(rawContent);
+            const thinking = rawThinking || tp.thinking;
+            const content = tp.content;
+            if (thinking) setStreamingThinking(thinking);
+            if (content) setStreaming(content);
+            else if (rawContent && tp.thinking) setStreaming("");
+          } catch { /* skip */ }
+        }
+      }
+
+      const tp = parseThinkTags(rawContent);
+      const finalThinking = rawThinking || tp.thinking;
+      const finalContent = tp.content || rawContent;
+
+      setMessages([...allMessages, {
+        role: "assistant",
+        content: finalContent || "No response",
+        thinking: finalThinking || undefined,
+      }]);
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        setMessages([...allMessages, { role: "assistant", content: `Error: ${msg}` }]);
+      }
+    } finally {
+      setStreaming("");
+      setStreamingThinking("");
+      setLoading(false);
+      abortRef.current = null;
+    }
+  }
+
+  function stop() {
+    abortRef.current?.abort();
   }
 
   function clearChat() {
@@ -374,25 +371,27 @@ function ChatPlayground() {
             <button className="text-[#908fa0] hover:text-[#c7c4d7] transition-colors p-1">
               <span className="material-symbols-outlined text-[20px]">attach_file</span>
             </button>
-            <button
-              onClick={send}
-              disabled={loading || !input.trim()}
-              className="bg-[#6366f1] hover:bg-[#4f46e5] text-white w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
-            >
-              {loading ? (
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-              ) : (
+            {loading ? (
+              <button
+                onClick={stop}
+                className="bg-[#f43f5e] hover:bg-[#e11d48] text-white w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0"
+              >
+                <span className="material-symbols-outlined text-[18px]">stop</span>
+              </button>
+            ) : (
+              <button
+                onClick={send}
+                disabled={!input.trim()}
+                className="bg-[#6366f1] hover:bg-[#4f46e5] text-white w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
+              >
                 <span className="material-symbols-outlined text-[18px]">send</span>
-              )}
-            </button>
+              </button>
+            )}
           </div>
           <div className="flex items-center justify-center gap-3 mt-2 text-[11px] text-[#464554] font-[family-name:var(--font-mono)]">
-            <span className="flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-[#22c55e]" : "bg-[#464554]"}`} />
-              {wsConnected ? "Connected" : "Idle — reconnects on send"}
-            </span>
+            <span>Direct API · /v1/chat/completions</span>
             <span>&middot;</span>
-            <span>Shift + Enter to add a new line</span>
+            <span>Enter to send</span>
           </div>
         </div>
       </div>

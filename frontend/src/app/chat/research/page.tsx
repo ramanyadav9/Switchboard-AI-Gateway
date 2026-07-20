@@ -421,6 +421,60 @@ export default function ResearchPage() {
     setTimeout(() => setCopiedReport(false), 2000);
   }
 
+  async function handleDelete(id: string) {
+    try {
+      await research.delete(id);
+      toast("Research deleted", "success");
+      if (activeTask?.id === id) setActiveTask(null);
+      if (expandedId === id) setExpandedId(null);
+      loadTasks();
+    } catch {
+      toast("Failed to delete research", "error");
+    }
+  }
+
+  function downloadPdf(query: string, report: string) {
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Research: ${query.replace(/"/g, "&quot;")}</title>
+<style>
+body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1a1a1a;line-height:1.7}
+h1{font-size:24px;border-bottom:2px solid #333;padding-bottom:8px}
+h2{font-size:18px;margin-top:24px}
+h3{font-size:15px}
+code{background:#f4f4f4;padding:2px 6px;border-radius:3px;font-size:13px}
+pre{background:#f4f4f4;padding:16px;border-radius:6px;overflow-x:auto;font-size:13px}
+blockquote{border-left:3px solid #ccc;margin:16px 0;padding:8px 16px;color:#555}
+a{color:#4f46e5}
+.meta{color:#666;font-size:13px;margin-bottom:24px}
+@media print{body{margin:20px}}
+</style></head><body>
+<h1>Research Report</h1>
+<p class="meta"><strong>Query:</strong> ${query.replace(/</g, "&lt;")}<br>
+<strong>Generated:</strong> ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}<br>
+<strong>Powered by:</strong> Switchboard AI Gateway</p>
+<hr>
+${report
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+  .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+  .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+  .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+  .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+  .replace(/\*(.+?)\*/g, "<em>$1</em>")
+  .replace(/\`([^\`]+)\`/g, "<code>$1</code>")
+  .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+  .replace(/^- (.+)$/gm, "<li>$1</li>")
+  .replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>")
+  .replace(/\n\n/g, "</p><p>")
+  .replace(/\n/g, "<br>")}
+</body></html>`;
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => win.print(), 500);
+    }
+  }
+
   // Combine active task with history, avoiding duplicates
   const sortedTasks = (() => {
     const map = new Map<string, ResearchTask>();
@@ -685,16 +739,30 @@ export default function ResearchPage() {
                             >
                               Research Report
                             </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                copyReport(displayTask.report!);
-                              }}
-                              className="t-btn-ghost text-[12px] px-3 py-1 rounded transition-colors flex items-center gap-1.5"
-                            >
-                              <span className="material-symbols-outlined text-[14px]">content_copy</span>
-                              {copiedReport ? "Copied!" : "Copy Report"}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); copyReport(displayTask.report!); }}
+                                className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                                {copiedReport ? "Copied!" : "Copy"}
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); downloadPdf(displayTask.query, displayTask.report!); }}
+                                className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">download</span>
+                                PDF
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); if (confirm("Delete this research?")) handleDelete(task.id); }}
+                                className="text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1 hover:bg-white/5"
+                                style={{ color: "var(--error)" }}
+                              >
+                                <span className="material-symbols-outlined text-[14px]">delete</span>
+                                Delete
+                              </button>
+                            </div>
                           </div>
                           <div
                             className="border rounded-lg p-5 overflow-x-auto"

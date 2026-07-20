@@ -142,6 +142,7 @@ export const research = {
   list: () => apiFetch("/me/research"),
   get: (id: string) => apiFetch(`/me/research/${id}`),
   cancel: (id: string) => apiFetch(`/me/research/${id}/cancel`, { method: "POST" }),
+  delete: (id: string) => apiFetch(`/me/research/${id}`, { method: "DELETE" }),
   stream: (id: string) => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     return fetch(`${API_BASE}/me/research/${id}/stream`, {

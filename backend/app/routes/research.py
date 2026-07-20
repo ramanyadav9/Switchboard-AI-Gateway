@@ -156,3 +156,22 @@ async def cancel_research(
     r.status = "cancelled"
     db.commit()
     return {"detail": "Cancelled"}
+
+
+@router.delete("/{research_id}")
+def delete_research(
+    research_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    r = db.query(ResearchTask).filter(
+        ResearchTask.id == research_id, ResearchTask.user_id == user.id
+    ).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Research not found")
+    task = _running.get(research_id)
+    if task and not task.done():
+        task.cancel()
+    db.delete(r)
+    db.commit()
+    return {"detail": "Deleted"}

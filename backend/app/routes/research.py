@@ -82,6 +82,8 @@ def list_research(
             "status": r.status,
             "current_round": r.current_round,
             "sources_count": r.sources_count,
+            "report": r.report,
+            "sources": r.sources,
             "created_at": r.created_at.isoformat(),
         }
         for r in items

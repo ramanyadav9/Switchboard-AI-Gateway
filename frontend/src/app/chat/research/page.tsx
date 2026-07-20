@@ -643,7 +643,16 @@ ${report
                   {/* Task Row */}
                   <div
                     className="group px-4 py-3 cursor-pointer hover:bg-white/[0.03] transition-colors"
-                    onClick={() => setExpandedId(isExpanded ? null : task.id)}
+                    onClick={async () => {
+                      if (isExpanded) { setExpandedId(null); return; }
+                      setExpandedId(task.id);
+                      if (task.status === "done" && !task.report) {
+                        try {
+                          const full = await research.get(task.id);
+                          setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, report: full.report, sources: full.sources } : t));
+                        } catch { /* ignore */ }
+                      }
+                    }}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">

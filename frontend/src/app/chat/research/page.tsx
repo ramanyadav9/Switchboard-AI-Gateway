@@ -416,9 +416,22 @@ export default function ResearchPage() {
   }
 
   function copyReport(text: string) {
-    navigator.clipboard.writeText(text);
-    setCopiedReport(true);
-    setTimeout(() => setCopiedReport(false), 2000);
+    if (!text) { toast("Nothing to copy", "error"); return; }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopiedReport(true);
+      setTimeout(() => setCopiedReport(false), 2000);
+      toast("Report copied", "success");
+    } catch {
+      toast("Failed to copy", "error");
+    }
   }
 
   async function handleDelete(id: string) {

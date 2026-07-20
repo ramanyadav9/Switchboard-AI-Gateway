@@ -28,7 +28,10 @@ def init_db() -> None:
     if not settings.DATABASE_URL.startswith("sqlite"):
         from sqlalchemy import text
         with engine.connect() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            conn.commit()
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
     Base.metadata.create_all(bind=engine)

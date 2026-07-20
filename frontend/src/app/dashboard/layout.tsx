@@ -9,8 +9,6 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const mainNav = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { href: "/dashboard/keys", label: "API Keys", icon: "vpn_key" },
-  { href: "/dashboard/skills", label: "Skills", icon: "psychology" },
-  { href: "/dashboard/research", label: "Research", icon: "science" },
   { href: "/dashboard/playground", label: "Playground", icon: "terminal" },
   { href: "/dashboard/docs", label: "Docs", icon: "description" },
 ];

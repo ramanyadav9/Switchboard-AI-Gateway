@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 import httpx
 
 from app.config import get_settings
+import uuid
+
 from app.db import SessionLocal
-from app.models import ResearchTask
+from app.models import ChatMessage, ResearchTask
 from app.services.search import search_web
 from app.services.web_fetch import fetch_url_content
 
@@ -102,11 +104,13 @@ class ResearchEngine:
         query: str,
         user_id: str,
         http_client: httpx.AsyncClient,
+        conversation_id: str | None = None,
     ):
         self.research_id = research_id
         self.query = query
         self.user_id = user_id
         self.http_client = http_client
+        self.conversation_id = conversation_id
         self.report = ""
         self.findings: list[dict] = []
         self.sources: list[dict] = []
@@ -225,18 +229,42 @@ class ResearchEngine:
 
             await self._update_status("done", report=final)
 
+            db = SessionLocal()
             try:
-                from app.services.rag import index_content
-                db = SessionLocal()
+                # Save summary to conversation so LLM can discuss it
+                if self.conversation_id:
+                    summary = final[:600].rsplit(".", 1)[0] + "." if len(final) > 600 else final
+                    db.add(ChatMessage(
+                        id=str(uuid.uuid4()),
+                        conversation_id=self.conversation_id,
+                        role="user",
+                        content=f"Research: {self.query}",
+                        token_count=len(self.query) // 3,
+                    ))
+                    db.add(ChatMessage(
+                        id=str(uuid.uuid4()),
+                        conversation_id=self.conversation_id,
+                        role="assistant",
+                        content=f"[Research complete — {len(self.sources)} sources, {self.current_round} rounds]\n\n{summary}\n\n*(Full report available in Research tab)*",
+                        token_count=len(summary) // 3,
+                    ))
+                    conv = db.query(ResearchTask).filter(ResearchTask.id == self.research_id).first()
+                    if conv:
+                        from datetime import datetime, timezone as tz
+                        conv.updated_at = datetime.now(tz.utc)
+                    db.commit()
+
+                # Index into RAG
                 try:
+                    from app.services.rag import index_content
                     index_content(
                         db, self.user_id, "research",
                         self.research_id, self.query, final,
                     )
-                finally:
-                    db.close()
-            except Exception:
-                pass
+                except Exception:
+                    pass
+            finally:
+                db.close()
 
             return final
 

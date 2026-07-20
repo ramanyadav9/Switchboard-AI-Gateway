@@ -53,7 +53,8 @@ async def start_research(
     db.commit()
 
     engine = ResearchEngine(
-        research_id, body.query, user.id, request.app.state.http_client
+        research_id, body.query, user.id, request.app.state.http_client,
+        conversation_id=body.conversation_id,
     )
     task = asyncio.create_task(engine.run())
     _running[research_id] = task

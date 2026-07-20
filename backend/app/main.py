@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.db import init_db
 from app.routes import auth, chat, conversations, keys, proxy, research, settings, skills, usage, web_search, ws_chat, ws_transcribe
 
-settings = get_settings()
+cfg = get_settings()
 
 
 @asynccontextmanager
@@ -23,8 +23,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.APP_VERSION,
+    title=cfg.APP_NAME,
+    version=cfg.APP_VERSION,
     description="Switchboard - Self-Hosted Multi-Model AI Gateway",
     lifespan=lifespan,
 )
@@ -33,7 +33,7 @@ from app.middleware import ObservabilityMiddleware
 app.add_middleware(ObservabilityMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=cfg.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,8 +56,8 @@ app.include_router(ws_transcribe.router, tags=["websocket"])
 @app.get("/")
 async def root():
     return {
-        "name": settings.APP_NAME,
-        "version": settings.APP_VERSION,
+        "name": cfg.APP_NAME,
+        "version": cfg.APP_VERSION,
         "status": "running",
     }
 

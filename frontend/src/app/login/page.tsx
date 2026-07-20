@@ -19,7 +19,7 @@ export default function LoginPage() {
     try {
       const { access_token } = await auth.login(email, password);
       localStorage.setItem("token", access_token);
-      router.push("/dashboard");
+      router.push("/chat");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

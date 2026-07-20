@@ -434,45 +434,82 @@ export default function ResearchPage() {
   }
 
   function downloadPdf(query: string, report: string) {
-    const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Research: ${query.replace(/"/g, "&quot;")}</title>
-<style>
-body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1a1a1a;line-height:1.7}
-h1{font-size:24px;border-bottom:2px solid #333;padding-bottom:8px}
-h2{font-size:18px;margin-top:24px}
-h3{font-size:15px}
-code{background:#f4f4f4;padding:2px 6px;border-radius:3px;font-size:13px}
-pre{background:#f4f4f4;padding:16px;border-radius:6px;overflow-x:auto;font-size:13px}
-blockquote{border-left:3px solid #ccc;margin:16px 0;padding:8px 16px;color:#555}
-a{color:#4f46e5}
-.meta{color:#666;font-size:13px;margin-bottom:24px}
-@media print{body{margin:20px}}
-</style></head><body>
-<h1>Research Report</h1>
-<p class="meta"><strong>Query:</strong> ${query.replace(/</g, "&lt;")}<br>
-<strong>Generated:</strong> ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}<br>
-<strong>Powered by:</strong> Switchboard AI Gateway</p>
-<hr>
-${report
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-  .replace(/^### (.+)$/gm, "<h3>$1</h3>")
-  .replace(/^## (.+)$/gm, "<h2>$1</h2>")
-  .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-  .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-  .replace(/\*(.+?)\*/g, "<em>$1</em>")
-  .replace(/\`([^\`]+)\`/g, "<code>$1</code>")
-  .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-  .replace(/^- (.+)$/gm, "<li>$1</li>")
-  .replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>")
-  .replace(/\n\n/g, "</p><p>")
-  .replace(/\n/g, "<br>")}
-</body></html>`;
-    const win = window.open("", "_blank");
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-      setTimeout(() => win.print(), 500);
+    if (!report) { toast("No report to download", "error"); return; }
+
+    function md2html(md: string): string {
+      let html = md;
+      html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) =>
+        `<pre><code>${lang ? `<span style="color:#666;font-size:11px">${lang}</span>\n` : ""}${code.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</code></pre>`
+      );
+      html = html.replace(/^#### (.+)$/gm, "<h4>$1</h4>");
+      html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+      html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+      html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+      html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
+      html = html.replace(/`([^`]+)`/g, '<code style="background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#4f46e5">$1</a>');
+      html = html.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+      html = html.replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>");
+      html = html.replace(/(<li>[\s\S]*?<\/li>)\n?(?=<li>)/g, "$1");
+      html = html.replace(/((?:<li>[\s\S]*?<\/li>\s*)+)/g, "<ul>$1</ul>");
+      html = html.replace(/^---$/gm, "<hr>");
+      const blocks = html.split(/\n\n+/);
+      html = blocks.map(b => {
+        const t = b.trim();
+        if (!t) return "";
+        if (/^<[huo]|^<pre|^<hr/i.test(t)) return t;
+        return `<p>${t.replace(/\n/g, "<br>")}</p>`;
+      }).join("\n");
+      return html;
     }
+
+    const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const safeQuery = query.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const body = md2html(report);
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Research: ${query.replace(/"/g, "")}</title>
+<style>
+body{font-family:Georgia,"Times New Roman",serif;max-width:780px;margin:50px auto;padding:0 24px;color:#1a1a1a;line-height:1.8;font-size:15px}
+h1{font-size:26px;border-bottom:2px solid #222;padding-bottom:10px;margin-top:32px}
+h2{font-size:20px;margin-top:28px;color:#333}
+h3{font-size:17px;margin-top:22px;color:#444}
+h4{font-size:15px;margin-top:18px;color:#555}
+p{margin:10px 0}
+ul,ol{padding-left:24px;margin:10px 0}
+li{margin:4px 0}
+pre{background:#f5f5f5;padding:14px;border-radius:6px;overflow-x:auto;font-size:13px;border:1px solid #e0e0e0}
+hr{border:none;border-top:1px solid #ddd;margin:24px 0}
+a{color:#4f46e5;text-decoration:none}
+a:hover{text-decoration:underline}
+strong{color:#111}
+.header{border-bottom:1px solid #eee;padding-bottom:16px;margin-bottom:24px}
+.meta{color:#777;font-size:13px;line-height:1.6}
+.footer{margin-top:40px;padding-top:16px;border-top:1px solid #eee;color:#999;font-size:12px;text-align:center}
+@media print{body{margin:0;max-width:100%}a{color:#333}}
+</style></head><body>
+<div class="header">
+<h1 style="border:none;padding:0;margin:0 0 8px 0">Research Report</h1>
+<div class="meta">
+<strong>Query:</strong> ${safeQuery}<br>
+<strong>Date:</strong> ${date}<br>
+<strong>Platform:</strong> Switchboard AI Gateway
+</div></div>
+${body}
+<div class="footer">Generated by Switchboard AI Gateway &mdash; ${date}</div>
+</body></html>`;
+
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `research-${query.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "-")}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast("Downloaded — open in browser and Print → Save as PDF", "success");
   }
 
   // Combine active task with history, avoiding duplicates

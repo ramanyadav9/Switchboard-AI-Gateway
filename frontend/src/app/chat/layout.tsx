@@ -57,6 +57,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   const [convList, setConvList] = useState<Conv[]>([]);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const loadConversations = useCallback(() => {
     conversations.list().then(setConvList).catch(() => {
@@ -191,52 +192,55 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
       </div>
 
       {/* Footer */}
-      <div className="px-3 py-3" style={{ borderTop: "1px solid var(--border)" }}>
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2 px-2 py-1.5 text-[12px] transition-colors rounded hover:bg-white/5"
-          style={{ color: "var(--fg-muted)" }}
-        >
-          <span className="material-symbols-outlined text-[14px]">dashboard</span>
-          API Dashboard
-        </Link>
-        <Link
-          href="/chat/settings"
-          className="flex items-center gap-2 px-2 py-1.5 text-[12px] rounded transition-colors hover:bg-white/5"
-          style={{ color: "var(--fg-muted)" }}
-        >
-          <span className="material-symbols-outlined text-[14px]">settings</span>
-          Settings
-        </Link>
-        <Link
-          href="/chat/skills"
-          className="flex items-center gap-2 px-2 py-1.5 text-[12px] rounded transition-colors hover:bg-white/5"
-          style={{ color: "var(--fg-muted)" }}
-        >
-          <span className="material-symbols-outlined text-[14px]">psychology</span>
-          Skills
-        </Link>
-        <Link
-          href="/chat/research"
-          className="flex items-center gap-2 px-2 py-1.5 text-[12px] rounded transition-colors hover:bg-white/5"
-          style={{ color: "var(--fg-muted)" }}
-        >
-          <span className="material-symbols-outlined text-[14px]">science</span>
-          Research
-        </Link>
-        <div className="flex items-center justify-between px-2 mt-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold shrink-0" style={{ background: "var(--bg-emphasis)", color: "var(--fg)" }}>
+      <div className="px-3 py-3 relative" style={{ borderTop: "1px solid var(--border)" }}>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+            <div className="absolute bottom-full left-3 right-3 mb-1 rounded-lg border shadow-lg z-50 overflow-hidden" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+              {[
+                { href: "/chat/settings", icon: "settings", label: "Settings" },
+                { href: "/chat/skills", icon: "psychology", label: "Skills" },
+                { href: "/chat/research", icon: "science", label: "Research" },
+                { href: "/dashboard", icon: "dashboard", label: "API Dashboard" },
+              ].map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => { setMenuOpen(false); setSidebarOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 text-[12px] transition-colors hover:bg-white/5"
+                  style={{ color: "var(--fg-secondary)" }}
+                >
+                  <span className="material-symbols-outlined text-[14px]">{item.icon}</span>
+                  {item.label}
+                </Link>
+              ))}
+              <div style={{ borderTop: "1px solid var(--border)" }}>
+                <button
+                  onClick={() => { setMenuOpen(false); logout(); }}
+                  className="flex items-center gap-2 px-3 py-2 text-[12px] transition-colors hover:bg-white/5 w-full"
+                  style={{ color: "var(--error)" }}
+                >
+                  <span className="material-symbols-outlined text-[14px]">logout</span>
+                  Log out
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+        <div className="flex items-center justify-between px-1">
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1.5 transition-colors hover:bg-white/5 cursor-pointer"
+          >
+            <div className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold shrink-0" style={{ background: "var(--bg-emphasis)" }}>
               {user?.email?.substring(0, 2).toUpperCase() || "??"}
             </div>
-            <span className="text-[12px] truncate" style={{ color: "var(--fg-muted)" }}>{user?.email}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <ThemeToggle />
-            <button onClick={logout} className="transition-colors" style={{ color: "var(--fg-muted)" }}>
-              <span className="material-symbols-outlined text-[16px]">logout</span>
-            </button>
-          </div>
+            <span className="text-[12px] truncate" style={{ color: "var(--fg-secondary)" }}>{user?.email}</span>
+            <span className="material-symbols-outlined text-[14px]" style={{ color: "var(--fg-muted)" }}>
+              {menuOpen ? "expand_more" : "expand_less"}
+            </span>
+          </button>
+          <ThemeToggle />
         </div>
       </div>
     </>
@@ -272,7 +276,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
       {/* Main content */}
       <main className="flex-1 flex flex-col min-w-0 md:pt-0 pt-12">
-        {children}
+        {pathname.startsWith("/chat/settings") || pathname.startsWith("/chat/skills") || pathname.startsWith("/chat/research") ? (
+          <div className="flex-1 overflow-y-auto p-6 md:p-8">
+            <div className="max-w-[900px] mx-auto">{children}</div>
+          </div>
+        ) : (
+          children
+        )}
       </main>
     </div>
   );

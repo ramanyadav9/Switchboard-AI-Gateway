@@ -642,7 +642,7 @@ ${report
                 <div key={task.id}>
                   {/* Task Row */}
                   <div
-                    className="px-4 py-3 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                    className="group px-4 py-3 cursor-pointer hover:bg-white/[0.03] transition-colors"
                     onClick={() => setExpandedId(isExpanded ? null : task.id)}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -691,6 +691,19 @@ ${report
                           >
                             <span className="material-symbols-outlined text-[14px]">cancel</span>
                             Cancel
+                          </button>
+                        )}
+                        {!isRunning && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm("Delete this research?")) handleDelete(task.id);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 text-[14px] p-1 rounded transition-all hover:bg-white/5"
+                            style={{ color: "var(--error)" }}
+                            title="Delete"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">delete</span>
                           </button>
                         )}
                         <span

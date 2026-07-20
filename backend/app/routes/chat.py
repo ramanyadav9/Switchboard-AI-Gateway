@@ -33,6 +33,7 @@ MAX_CONCURRENT_GENS = 3
 class ChatRequest(BaseModel):
     conversation_id: str
     content: str
+    display_content: str | None = None
     model: str | None = None
     temperature: float = 0.7
     max_tokens: int = 2048
@@ -151,6 +152,7 @@ async def chat_sse(
 
     model = body.model or conv.model
     content = body.content.strip()
+    save_content = (body.display_content or content).strip()
     if not content:
         raise HTTPException(status_code=400, detail="Empty message")
 
@@ -171,10 +173,10 @@ async def chat_sse(
     llm_key = ext["api_key"] if ext else settings.VLLM_API_KEY
 
     if not body.stream:
-        return await _non_streaming(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, content, user.id, llm_base, llm_key)
+        return await _non_streaming(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key)
 
     return StreamingResponse(
-        _sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, content, user.id, llm_base, llm_key),
+        _sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

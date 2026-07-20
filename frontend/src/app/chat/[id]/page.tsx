@@ -694,6 +694,7 @@ export default function ConversationPage() {
       const res = await chatStream({
         conversation_id: id,
         content: searchPrompt,
+        display_content: query,
         model: selectedModel || undefined,
       });
 

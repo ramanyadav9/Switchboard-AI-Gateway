@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { conversations, chatStream, models as modelsApi } from "@/lib/api";
+import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
 
 type Message = { id?: string; role: string; content: string; thinking?: string };
@@ -348,6 +348,10 @@ export default function ConversationPage() {
   const [streaming, setStreaming] = useState(false);
   const [streamContent, setStreamContent] = useState("");
   const [streamThinking, setStreamThinking] = useState("");
+  const [researchMode, setResearchMode] = useState(false);
+  const [researchProgress, setResearchProgress] = useState<{ status: string; round: number; sources: number } | null>(null);
+  const [showSkills, setShowSkills] = useState(false);
+  const [skillsList, setSkillsList] = useState<{ id: string; name: string; content: string; category: string }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const promptApplied = useRef(false);
@@ -517,6 +521,65 @@ export default function ConversationPage() {
     setStreamContent("");
     setStreamThinking("");
     setStreaming(false);
+  }
+
+  async function sendResearch() {
+    if (!input.trim() || streaming) return;
+    const query = input.trim();
+    const userMsg: Message = { role: "user", content: `🔍 **Research:** ${query}` };
+    const updated = [...messages, userMsg];
+    setMessages(updated);
+    setInput("");
+    setStreaming(true);
+    setResearchProgress({ status: "planning", round: 0, sources: 0 });
+
+    try {
+      const { id: researchId } = await researchApi.start(query, id);
+      const res = await researchApi.stream(researchId);
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(trimmed.slice(6));
+            setResearchProgress({ status: data.status, round: data.round || 0, sources: data.sources || 0 });
+            if (data.status === "done" && data.report) {
+              setMessages([...updated, { role: "assistant", content: data.report }]);
+            } else if (data.status === "failed") {
+              setMessages([...updated, { role: "assistant", content: `Research failed: ${data.report || "Unknown error"}` }]);
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Research failed";
+      setMessages([...updated, { role: "assistant", content: `Error: ${msg}` }]);
+      toast(msg, "error");
+    } finally {
+      setStreaming(false);
+      setResearchProgress(null);
+    }
+  }
+
+  function loadSkills() {
+    skillsApi.list().then(setSkillsList).catch(() => {});
+  }
+
+  function insertSkill(content: string) {
+    setInput((prev) => prev + content);
+    setShowSkills(false);
   }
 
   if (loading) {
@@ -740,29 +803,91 @@ export default function ConversationPage() {
         </div>
       </div>
 
+      {/* Research progress */}
+      {researchProgress && (
+        <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)", background: "var(--accent-subtle)" }}>
+          <div className="max-w-3xl mx-auto flex items-center gap-3">
+            <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin shrink-0" style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }} />
+            <div className="flex-1 text-[13px]" style={{ color: "var(--accent)" }}>
+              <span className="font-semibold capitalize">{researchProgress.status}</span>
+              {researchProgress.round > 0 && <span> · Round {researchProgress.round}/5</span>}
+              {researchProgress.sources > 0 && <span> · {researchProgress.sources} sources</span>}
+            </div>
+            <button onClick={stop} className="text-[12px] px-2 py-1 rounded transition-colors hover:bg-white/10" style={{ color: "var(--fg-muted)" }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input */}
-      <div className="p-4" style={{ borderTop: "1px solid var(--border)", background: "var(--bg)" }}>
+      <div className="p-4" style={{ borderTop: researchProgress ? "none" : "1px solid var(--border)", background: "var(--bg)" }}>
         <div className="max-w-3xl mx-auto">
+          {/* Skills picker dropdown */}
+          {showSkills && skillsList.length > 0 && (
+            <div className="mb-2 rounded-lg border overflow-hidden max-h-[200px] overflow-y-auto" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+              {skillsList.map((skill) => (
+                <button
+                  key={skill.id}
+                  onClick={() => insertSkill(skill.content)}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                >
+                  <span className="material-symbols-outlined text-[16px]" style={{ color: "var(--accent)" }}>psychology</span>
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-medium" style={{ color: "var(--fg)" }}>{skill.name}</div>
+                    <div className="text-[11px] truncate" style={{ color: "var(--fg-muted)" }}>{skill.content.slice(0, 60)}...</div>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded ml-auto shrink-0 font-[family-name:var(--font-mono)]" style={{ background: "var(--bg-muted)", color: "var(--fg-muted)" }}>{skill.category}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div
-            className="flex items-end gap-2 rounded-xl px-4 py-2 transition-colors"
+            className="flex items-end gap-2 rounded-xl px-3 py-2 transition-colors"
             style={{
               background: "var(--bg)",
               border: "1px solid var(--border)",
             }}
           >
+            {/* Skills button */}
+            <button
+              onClick={() => { if (!showSkills) loadSkills(); setShowSkills(!showSkills); }}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 hover:bg-white/5"
+              style={{ color: showSkills ? "var(--accent)" : "var(--fg-muted)" }}
+              title="Skills (prompt templates)"
+            >
+              <span className="material-symbols-outlined text-[18px]">psychology</span>
+            </button>
+
+            {/* Research toggle */}
+            <button
+              onClick={() => setResearchMode(!researchMode)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 hover:bg-white/5"
+              style={{ color: researchMode ? "var(--accent)" : "var(--fg-muted)" }}
+              title={researchMode ? "Research mode ON" : "Research mode OFF"}
+            >
+              <span className="material-symbols-outlined text-[18px]">travel_explore</span>
+            </button>
+
             <textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                if (e.target.value.endsWith("/")) { loadSkills(); setShowSkills(true); }
+                else if (showSkills && !e.target.value.includes("/")) setShowSkills(false);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  send();
+                  researchMode ? sendResearch() : send();
                 }
+                if (e.key === "Escape") setShowSkills(false);
               }}
               rows={1}
               className="flex-1 bg-transparent py-1.5 text-[14px] focus:outline-none resize-none max-h-[150px]"
               style={{ color: "var(--fg)" }}
-              placeholder="Message Switchboard..."
+              placeholder={researchMode ? "What would you like to research?" : "Message Switchboard..."}
               disabled={streaming}
               onInput={(e) => {
                 const el = e.target as HTMLTextAreaElement;
@@ -775,18 +900,16 @@ export default function ConversationPage() {
                 onClick={stop}
                 className="bg-[#f43f5e] hover:bg-[#e11d48] text-white w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0"
               >
-                <span className="material-symbols-outlined text-[18px]">
-                  stop
-                </span>
+                <span className="material-symbols-outlined text-[18px]">stop</span>
               </button>
             ) : (
               <button
-                onClick={send}
+                onClick={researchMode ? sendResearch : send}
                 disabled={!input.trim()}
                 className="t-btn w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
               >
                 <span className="material-symbols-outlined text-[18px]">
-                  arrow_upward
+                  {researchMode ? "travel_explore" : "arrow_upward"}
                 </span>
               </button>
             )}
@@ -795,9 +918,18 @@ export default function ConversationPage() {
             className="flex items-center justify-center gap-3 mt-2 text-[11px] font-[family-name:var(--font-mono)]"
             style={{ color: "var(--fg-muted)" }}
           >
-            <span>Shift + Enter for new line</span>
+            {researchMode && (
+              <>
+                <span className="flex items-center gap-1" style={{ color: "var(--accent)" }}>
+                  <span className="material-symbols-outlined text-[12px]">travel_explore</span>
+                  Research mode
+                </span>
+                <span>&middot;</span>
+              </>
+            )}
+            <span>Shift+Enter new line</span>
             <span>&middot;</span>
-            <span>Switchboard can make mistakes</span>
+            <span>/ for skills</span>
           </div>
         </div>
       </div>

@@ -218,6 +218,93 @@ function InlineMarkdown({ text }: { text: string }) {
   return <>{elements}</>;
 }
 
+function SearchIndicator({ phase, results }: { phase: string; results: { title: string; url: string }[] }) {
+  const steps = [
+    { key: "searching", icon: "search", label: "Searching the web" },
+    { key: "reading", icon: "auto_stories", label: "Reading sources" },
+    { key: "answering", icon: "edit_note", label: "Writing answer" },
+  ];
+  const activeIdx = steps.findIndex((s) => s.key === phase);
+
+  return (
+    <div className="flex justify-start animate-fade-in">
+      <div className="max-w-[85%]">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-5 h-5 rounded flex items-center justify-center" style={{ background: "var(--accent-subtle)" }}>
+            <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--accent)" }}>travel_explore</span>
+          </div>
+          <span className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Web Search</span>
+        </div>
+        <div className="rounded-xl px-4 py-3" style={{ background: "var(--bg-muted)", border: "1px solid var(--border)" }}>
+          {/* Steps */}
+          <div className="flex items-center gap-6 mb-3">
+            {steps.map((step, i) => (
+              <div key={step.key} className="flex items-center gap-1.5">
+                <div
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] ${i <= activeIdx ? "" : "opacity-30"}`}
+                  style={i === activeIdx
+                    ? { background: "var(--accent)", color: "#fff" }
+                    : i < activeIdx
+                    ? { background: "var(--success)", color: "#fff" }
+                    : { background: "var(--bg-emphasis)" }
+                  }
+                >
+                  {i < activeIdx ? (
+                    <span className="material-symbols-outlined text-[12px]">check</span>
+                  ) : i === activeIdx ? (
+                    <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                  ) : (
+                    <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--fg-muted)" }}>{step.icon}</span>
+                  )}
+                </div>
+                <span className={`text-[11px] ${i === activeIdx ? "font-medium" : ""}`} style={{ color: i <= activeIdx ? "var(--fg-secondary)" : "var(--fg-muted)" }}>
+                  {step.label}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Animated status */}
+          <div className="flex items-center gap-2">
+            <div className="relative w-4 h-4">
+              <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: "var(--accent)" }} />
+              <div className="relative w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "var(--accent)" }}>
+                <span className="material-symbols-outlined text-[10px] text-white">{steps[activeIdx]?.icon || "search"}</span>
+              </div>
+            </div>
+            <span className="text-[12px] font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-secondary)" }}>
+              {phase === "searching" && "Querying search engines"}
+              {phase === "reading" && `Found ${results.length} sources`}
+              {phase === "answering" && "Generating response with citations"}
+              <span className="inline-flex ml-1">
+                <span className="animate-bounce" style={{ animationDelay: "0ms" }}>.</span>
+                <span className="animate-bounce" style={{ animationDelay: "150ms" }}>.</span>
+                <span className="animate-bounce" style={{ animationDelay: "300ms" }}>.</span>
+              </span>
+            </span>
+          </div>
+
+          {/* Source cards (appear during reading phase) */}
+          {results.length > 0 && (
+            <div className="mt-3 flex flex-col gap-1">
+              {results.map((r, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-2 px-2 py-1 rounded text-[11px] animate-fade-in"
+                  style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+                >
+                  <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--success)" }}>check_circle</span>
+                  <span className="truncate" style={{ color: "var(--fg-secondary)" }}>{r.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MessageContent({ text }: { text: string }) {
   const parts = text.split(/(```[\s\S]*?```)/g);
   return (
@@ -350,6 +437,8 @@ export default function ConversationPage() {
   const [streamThinking, setStreamThinking] = useState("");
   const [chatMode, setChatMode] = useState<"chat" | "search" | "research">("chat");
   const [researchProgress, setResearchProgress] = useState<{ status: string; round: number; sources: number } | null>(null);
+  const [searchPhase, setSearchPhase] = useState<"idle" | "searching" | "reading" | "answering">("idle");
+  const [searchResults, setSearchResults] = useState<{ title: string; url: string }[]>([]);
   const [showSkills, setShowSkills] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [skillsList, setSkillsList] = useState<{ id: string; name: string; content: string; category: string }[]>([]);
@@ -584,9 +673,15 @@ export default function ConversationPage() {
     setStreaming(true);
     setStreamContent("");
     setStreamThinking("");
+    setSearchPhase("searching");
+    setSearchResults([]);
 
     try {
       const { results } = await searchApi.web(query, 5);
+      setSearchPhase("reading");
+      setSearchResults(results.map((r: { title: string; url: string }) => ({ title: r.title, url: r.url })));
+      await new Promise((r) => setTimeout(r, 800));
+      setSearchPhase("answering");
       const searchContext = results.map((r: { title: string; url: string; snippet: string }, i: number) =>
         `[${i + 1}] ${r.title}\n${r.url}\n${r.snippet}`
       ).join("\n\n");
@@ -663,6 +758,8 @@ export default function ConversationPage() {
       setStreaming(false);
       setStreamContent("");
       setStreamThinking("");
+      setSearchPhase("idle");
+      setSearchResults([]);
       abortRef.current = null;
     }
   }
@@ -872,27 +969,19 @@ export default function ConversationPage() {
           )}
 
           {streaming && !streamContent && !streamThinking && (
-            <div className="flex justify-start animate-fade-in">
-              <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--fg-muted)" }}>
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                    fill="none"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-                Generating...
+            searchPhase !== "idle" ? (
+              <SearchIndicator phase={searchPhase} results={searchResults} />
+            ) : (
+              <div className="flex justify-start animate-fade-in">
+                <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--fg-muted)" }}>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Generating...
+                </div>
               </div>
-            </div>
+            )
           )}
         </div>
       </div>

@@ -14,7 +14,9 @@ from app.services.web_fetch import fetch_url_content
 
 settings = get_settings()
 
-MAX_ROUNDS = 5
+import asyncio
+
+MAX_ROUNDS = 3
 MAX_SOURCES_PER_ROUND = 3
 
 PLAN_PROMPT = """Analyze this research question and create a research plan.
@@ -62,21 +64,10 @@ New findings:
 
 Write an updated report incorporating the new information.
 Use markdown headings and inline citations like [1], [2].
-Keep the report well-structured and analytical."""
 
-DECIDE_PROMPT = """Is this research report comprehensive enough?
-
-Question: {query}
-Report length: {length} characters
-Rounds completed: {rounds}
-Sources analyzed: {sources}
-
-Report:
-{report}
-
-Answer ONLY "YES" or "NO".
-YES = report thoroughly covers the topic with sufficient evidence.
-NO = more research needed."""
+At the very end, on a new line, write either:
+VERDICT: COMPLETE — if the report thoroughly answers the question
+VERDICT: INCOMPLETE — if more research is needed"""
 
 FINAL_REPORT_PROMPT = """Write the final polished research report.
 
@@ -117,10 +108,30 @@ class ResearchEngine:
         self.prev_queries: list[str] = []
         self.current_round = 0
 
+    async def _fetch_and_extract(self, result: dict) -> dict | None:
+        try:
+            page = await fetch_url_content(result["url"])
+            if not page["success"]:
+                return None
+            extract = await self._llm_call(
+                EXTRACT_PROMPT.format(
+                    query=self.query,
+                    url=result["url"],
+                    content=page["content"][:8000],
+                ),
+                max_tokens=1024,
+            )
+            finding = json.loads(self._strip_json_fences(extract))
+            finding["url"] = result["url"]
+            finding["title"] = result["title"]
+            return finding
+        except Exception:
+            return None
+
     async def run(self) -> str:
         try:
             await self._update_status("planning")
-            plan = await self._llm_call(PLAN_PROMPT.format(query=self.query))
+            plan = await self._llm_call(PLAN_PROMPT.format(query=self.query), max_tokens=1024)
             try:
                 plan_data = json.loads(self._strip_json_fences(plan))
                 search_queries = plan_data.get("search_queries", [self.query])
@@ -131,13 +142,12 @@ class ResearchEngine:
                 self.current_round = round_num + 1
                 await self._update_status("searching")
 
+                search_tasks = [search_web(q, num_results=5) for q in search_queries[:3]]
+                search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
                 all_results = []
-                for q in search_queries[:3]:
-                    try:
-                        results = await search_web(q, num_results=5)
-                        all_results.extend(results)
-                    except Exception:
-                        continue
+                for r in search_results:
+                    if isinstance(r, list):
+                        all_results.extend(r)
                 self.prev_queries.extend(search_queries)
 
                 seen_urls = {s["url"] for s in self.sources}
@@ -149,28 +159,12 @@ class ResearchEngine:
                     break
 
                 await self._update_status("reading")
-                round_findings = []
-                for result in new_results:
-                    try:
-                        page = await fetch_url_content(result["url"])
-                        if not page["success"]:
-                            continue
-                        extract = await self._llm_call(
-                            EXTRACT_PROMPT.format(
-                                query=self.query,
-                                url=result["url"],
-                                content=page["content"][:12000],
-                            )
-                        )
-                        finding = json.loads(self._strip_json_fences(extract))
-                        finding["url"] = result["url"]
-                        finding["title"] = result["title"]
-                        round_findings.append(finding)
-                        self.sources.append(
-                            {"title": result["title"], "url": result["url"]}
-                        )
-                    except Exception:
-                        continue
+                extract_tasks = [self._fetch_and_extract(r) for r in new_results]
+                extracted = await asyncio.gather(*extract_tasks)
+                round_findings = [f for f in extracted if f is not None]
+
+                for f in round_findings:
+                    self.sources.append({"title": f["title"], "url": f["url"]})
 
                 if round_findings:
                     self.findings.extend(round_findings)
@@ -180,34 +174,27 @@ class ResearchEngine:
                         f"[{len(self.sources) - len(round_findings) + i + 1}] {f.get('title', '')} ({f.get('url', '')})\n{f.get('summary', '')}"
                         for i, f in enumerate(round_findings)
                     )
-                    self.report = await self._llm_call(
+                    synthesis = await self._llm_call(
                         SYNTHESIZE_PROMPT.format(
                             query=self.query,
-                            report=(self.report or "(No report yet — start fresh)")[:8000],
-                            findings=findings_text[:6000],
+                            report=(self.report or "(No report yet — start fresh)")[:6000],
+                            findings=findings_text[:4000],
                         )
                     )
 
-                if self.current_round >= 2 and self.report:
-                    decision = await self._llm_call(
-                        DECIDE_PROMPT.format(
-                            query=self.query,
-                            report=self.report[:4000],
-                            length=len(self.report),
-                            rounds=self.current_round,
-                            sources=len(self.sources),
-                        )
-                    )
-                    if "YES" in decision.upper():
+                    if "VERDICT: COMPLETE" in synthesis:
+                        self.report = synthesis.replace("VERDICT: COMPLETE", "").strip()
                         break
+                    self.report = synthesis.replace("VERDICT: INCOMPLETE", "").strip()
 
                 if self.current_round < MAX_ROUNDS:
                     new_q = await self._llm_call(
                         SEARCH_QUERIES_PROMPT.format(
                             query=self.query,
-                            report=self.report[:3000],
+                            report=self.report[:2000],
                             prev_queries=json.dumps(self.prev_queries),
-                        )
+                        ),
+                        max_tokens=512,
                     )
                     try:
                         search_queries = json.loads(self._strip_json_fences(new_q))
@@ -272,7 +259,7 @@ class ResearchEngine:
             await self._update_status("failed", report=f"Research failed: {e}")
             raise
 
-    async def _llm_call(self, prompt: str) -> str:
+    async def _llm_call(self, prompt: str, max_tokens: int = 4096) -> str:
         resp = await self.http_client.post(
             f"{settings.VLLM_LLM_BASE_URL}/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.VLLM_API_KEY}"},
@@ -280,7 +267,7 @@ class ResearchEngine:
                 "model": settings.DEFAULT_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 8192,
+                "max_tokens": max_tokens,
             },
             timeout=120.0,
         )

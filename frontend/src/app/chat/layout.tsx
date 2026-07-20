@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { auth, conversations } from "@/lib/api";
+import { auth, conversations, usage } from "@/lib/api";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useToast } from "@/components/toast";
 
@@ -58,6 +58,11 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [usageData, setUsageData] = useState<{ requests_today: number; tokens_today: number } | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const RPM_LIMIT = 50;
 
   const loadConversations = useCallback(() => {
     conversations.list().then(setConvList).catch(() => {
@@ -73,12 +78,29 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
       .catch(() => { localStorage.removeItem("token"); router.push("/login"); })
       .finally(() => setLoading(false));
     loadConversations();
+    usage.stats(1).then(setUsageData).catch(() => {});
   }, [router, loadConversations]);
 
-  // Refresh conversation list when pathname changes (new chat created)
   useEffect(() => {
     loadConversations();
   }, [pathname, loadConversations]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "n" || e.key === "N") {
+          e.preventDefault();
+          handleNewChat();
+        }
+        if (e.key === "k" || e.key === "K") {
+          e.preventDefault();
+          searchInputRef.current?.focus();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
 
   function logout() {
     localStorage.removeItem("token");
@@ -120,7 +142,10 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     );
   }
 
-  const groups = groupConversations(convList);
+  const filteredConvs = searchQuery
+    ? convList.filter((c) => (c.title || "").toLowerCase().includes(searchQuery.toLowerCase()))
+    : convList;
+  const groups = groupConversations(filteredConvs);
 
   const sidebarContent = (
     <>
@@ -142,12 +167,26 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           <span className="material-symbols-outlined text-[16px]">add</span>
           New Chat
         </button>
+        {/* Search */}
+        <div className="relative mt-2">
+          <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-[14px]" style={{ color: "var(--fg-muted)" }}>search</span>
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search chats... (Ctrl+K)"
+            className="t-input w-full rounded pl-7 pr-2 py-1.5 text-[12px]"
+          />
+        </div>
       </div>
 
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {convList.length === 0 && (
           <div className="text-center text-[12px] py-8" style={{ color: "var(--fg-muted)" }}>No conversations yet</div>
+        )}
+        {searchQuery && filteredConvs.length === 0 && convList.length > 0 && (
+          <div className="text-center text-[12px] py-8" style={{ color: "var(--fg-muted)" }}>No matches for &ldquo;{searchQuery}&rdquo;</div>
         )}
         {groups.map((group) => (
           <div key={group.label} className="mb-3">
@@ -240,7 +279,26 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
               {menuOpen ? "expand_more" : "expand_less"}
             </span>
           </button>
-          <ThemeToggle />
+          <div className="flex items-center gap-1">
+            {usageData && (() => {
+              const pct = Math.min((usageData.requests_today / RPM_LIMIT) * 100, 100);
+              const r = 10; const circ = 2 * Math.PI * r;
+              const color = pct > 80 ? "var(--error)" : pct > 50 ? "var(--syn-fn)" : "var(--success)";
+              return (
+                <div className="relative w-7 h-7 flex items-center justify-center" title={`${usageData.requests_today}/${RPM_LIMIT} requests today`}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" className="transform -rotate-90">
+                    <circle cx="12" cy="12" r={r} fill="none" stroke="var(--bg-emphasis)" strokeWidth="2.5" />
+                    <circle cx="12" cy="12" r={r} fill="none" stroke={color} strokeWidth="2.5"
+                      strokeDasharray={circ} strokeDashoffset={circ - (circ * pct) / 100}
+                      strokeLinecap="round" style={{ transition: "stroke-dashoffset 0.5s" }}
+                    />
+                  </svg>
+                  <span className="absolute text-[7px] font-bold font-[family-name:var(--font-mono)]" style={{ color }}>{Math.round(pct)}</span>
+                </div>
+              );
+            })()}
+            <ThemeToggle />
+          </div>
         </div>
       </div>
     </>

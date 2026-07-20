@@ -693,19 +693,6 @@ ${report
                             Cancel
                           </button>
                         )}
-                        {!isRunning && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (confirm("Delete this research?")) handleDelete(task.id);
-                            }}
-                            className="opacity-0 group-hover:opacity-100 text-[14px] p-1 rounded transition-all hover:bg-white/5"
-                            style={{ color: "var(--error)" }}
-                            title="Delete"
-                          >
-                            <span className="material-symbols-outlined text-[16px]">delete</span>
-                          </button>
-                        )}
                         <span
                           className={`material-symbols-outlined text-[18px] transition-transform ${isExpanded ? "rotate-180" : ""}`}
                           style={{ color: "var(--fg-muted)" }}

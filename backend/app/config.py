@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     SENSEVOICE_BASE_URL: str = "http://localhost:8006"
     VLLM_API_KEY: str = "vaani-local-key"
 
+    # Context window (match vLLM --max-model-len)
+    MAX_MODEL_LEN: int = 32768
+
     # SearXNG (web search)
     SEARXNG_URL: str = "http://localhost:8888"
     

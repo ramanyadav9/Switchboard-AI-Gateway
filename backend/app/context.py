@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.cache import get_cached_messages, cache_message
+from app.config import get_settings
 from app.models import ChatMessage, Conversation
+
+_settings = get_settings()
 
 GLOBAL_SYSTEM_PROMPT = """You are Switchboard, a helpful, accurate, and thoughtful AI assistant.
 
@@ -90,8 +93,10 @@ def build_prompt(
     conversation: Conversation,
     new_message: str,
     db: Session,
-    max_tokens: int = 6144,
+    max_tokens: int | None = None,
 ) -> ChatContext:
+    if max_tokens is None:
+        max_tokens = int(_settings.MAX_MODEL_LEN * 0.75)
     budget = max_tokens
     was_truncated = False
 

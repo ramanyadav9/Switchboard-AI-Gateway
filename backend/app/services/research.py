@@ -155,7 +155,7 @@ class ResearchEngine:
                             EXTRACT_PROMPT.format(
                                 query=self.query,
                                 url=result["url"],
-                                content=page["content"][:6000],
+                                content=page["content"][:12000],
                             )
                         )
                         finding = json.loads(self._strip_json_fences(extract))
@@ -179,8 +179,8 @@ class ResearchEngine:
                     self.report = await self._llm_call(
                         SYNTHESIZE_PROMPT.format(
                             query=self.query,
-                            report=(self.report or "(No report yet — start fresh)")[:4000],
-                            findings=findings_text[:3000],
+                            report=(self.report or "(No report yet — start fresh)")[:8000],
+                            findings=findings_text[:6000],
                         )
                     )
 
@@ -252,7 +252,7 @@ class ResearchEngine:
                 "model": settings.DEFAULT_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 4096,
+                "max_tokens": 8192,
             },
             timeout=120.0,
         )

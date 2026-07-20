@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import init_db
-from app.routes import auth, chat, conversations, keys, proxy, research, skills, usage, web_search, ws_chat, ws_transcribe
+from app.routes import auth, chat, conversations, keys, proxy, research, settings, skills, usage, web_search, ws_chat, ws_transcribe
 
 settings = get_settings()
 
@@ -45,6 +45,7 @@ app.include_router(chat.router, prefix="/me", tags=["chat"])
 app.include_router(proxy.router, prefix="/v1", tags=["proxy"])
 app.include_router(conversations.router, prefix="/me/conversations", tags=["conversations"])
 app.include_router(usage.router, prefix="/me", tags=["usage"])
+app.include_router(settings.router, prefix="/me", tags=["settings"])
 app.include_router(skills.router, prefix="/me/skills", tags=["skills"])
 app.include_router(web_search.router, prefix="/me", tags=["search"])
 app.include_router(research.router, prefix="/me/research", tags=["research"])

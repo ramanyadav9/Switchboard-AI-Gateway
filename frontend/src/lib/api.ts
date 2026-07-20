@@ -101,6 +101,24 @@ export const translate = {
     }),
 };
 
+export const userSettings = {
+  get: () => apiFetch("/me/settings"),
+  update: (data: { display_name?: string; default_model?: string; default_temperature?: number; default_system_prompt?: string }) =>
+    apiFetch("/me/settings", { method: "PATCH", body: JSON.stringify(data) }),
+};
+
+export const providers = {
+  templates: () => apiFetch("/me/providers/templates"),
+  list: () => apiFetch("/me/providers"),
+  add: (data: { provider: string; api_key: string; base_url?: string; name?: string }) =>
+    apiFetch("/me/providers", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: { api_key?: string; base_url?: string; name?: string; is_enabled?: boolean }) =>
+    apiFetch(`/me/providers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  delete: (id: string) => apiFetch(`/me/providers/${id}`, { method: "DELETE" }),
+  refresh: (id: string) => apiFetch(`/me/providers/${id}/refresh`, { method: "POST" }),
+  allModels: () => apiFetch("/me/models/all"),
+};
+
 export const skills = {
   list: () => apiFetch("/me/skills"),
   create: (data: { name: string; description: string; content: string; category?: string }) =>

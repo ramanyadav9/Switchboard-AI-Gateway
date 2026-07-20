@@ -17,6 +17,8 @@ from app.cache import (
 )
 from app.config import get_settings
 from app.context import build_prompt, build_summary_messages, estimate_tokens, should_summarize
+from app.models import UserProvider
+from app.services.providers import resolve_provider
 from app.db import SessionLocal, get_db
 from app.models import ApiKey, ChatMessage, Conversation, User
 from app.ratelimit import rpm_limit_for
@@ -162,17 +164,23 @@ async def chat_sse(
 
     http_client = request.app.state.http_client
 
+    # Resolve provider (external BYOK or local vLLM)
+    user_providers = db.query(UserProvider).filter(UserProvider.user_id == user.id).all()
+    ext = resolve_provider(user_providers, model)
+    llm_base = ext["base_url"] if ext else settings.VLLM_LLM_BASE_URL
+    llm_key = ext["api_key"] if ext else settings.VLLM_API_KEY
+
     if not body.stream:
-        return await _non_streaming(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, content, user.id)
+        return await _non_streaming(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, content, user.id, llm_base, llm_key)
 
     return StreamingResponse(
-        _sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, content, user.id),
+        _sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, content, user.id, llm_base, llm_key),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id):
+async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None):
     incr_active_generations(user_id)
 
     llm_body = {
@@ -190,10 +198,12 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     start_time = time.time()
 
     try:
+        base = llm_base or settings.VLLM_LLM_BASE_URL
+        key = llm_key or settings.VLLM_API_KEY
         async with http_client.stream(
             "POST",
-            f"{settings.VLLM_LLM_BASE_URL}/v1/chat/completions",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {settings.VLLM_API_KEY}"},
+            f"{base}/v1/chat/completions",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
             json=llm_body,
         ) as response:
             if response.status_code >= 400:
@@ -261,12 +271,14 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'latency_ms': latency_ms}})}\n\n"
 
 
-async def _non_streaming(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id):
+async def _non_streaming(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None):
     incr_active_generations(user_id)
     try:
+        base = llm_base or settings.VLLM_LLM_BASE_URL
+        key = llm_key or settings.VLLM_API_KEY
         response = await http_client.post(
-            f"{settings.VLLM_LLM_BASE_URL}/v1/chat/completions",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {settings.VLLM_API_KEY}"},
+            f"{base}/v1/chat/completions",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
             json={
                 "model": model,
                 "messages": ctx.messages,

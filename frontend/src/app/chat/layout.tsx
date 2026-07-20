@@ -200,6 +200,14 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           <span className="material-symbols-outlined text-[14px]">dashboard</span>
           API Dashboard
         </Link>
+        <Link
+          href="/chat/settings"
+          className="flex items-center gap-2 px-2 py-1.5 text-[12px] rounded transition-colors hover:bg-white/5"
+          style={{ color: "var(--fg-muted)" }}
+        >
+          <span className="material-symbols-outlined text-[14px]">settings</span>
+          Settings
+        </Link>
         <div className="flex items-center justify-between px-2 mt-2">
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold shrink-0" style={{ background: "var(--bg-emphasis)", color: "var(--fg)" }}>

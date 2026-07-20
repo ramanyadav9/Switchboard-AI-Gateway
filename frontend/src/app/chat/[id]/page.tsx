@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi } from "@/lib/api";
+import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
 
 type Message = { id?: string; role: string; content: string; thinking?: string };
@@ -348,9 +348,10 @@ export default function ConversationPage() {
   const [streaming, setStreaming] = useState(false);
   const [streamContent, setStreamContent] = useState("");
   const [streamThinking, setStreamThinking] = useState("");
-  const [researchMode, setResearchMode] = useState(false);
+  const [chatMode, setChatMode] = useState<"chat" | "search" | "research">("chat");
   const [researchProgress, setResearchProgress] = useState<{ status: string; round: number; sources: number } | null>(null);
   const [showSkills, setShowSkills] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const [skillsList, setSkillsList] = useState<{ id: string; name: string; content: string; category: string }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -570,6 +571,99 @@ export default function ConversationPage() {
     } finally {
       setStreaming(false);
       setResearchProgress(null);
+    }
+  }
+
+  async function sendWithSearch() {
+    if (!input.trim() || streaming) return;
+    const query = input.trim();
+    const userMsg: Message = { role: "user", content: query };
+    const updated = [...messages, userMsg];
+    setMessages(updated);
+    setInput("");
+    setStreaming(true);
+    setStreamContent("");
+    setStreamThinking("");
+
+    try {
+      const { results } = await searchApi.web(query, 5);
+      const searchContext = results.map((r: { title: string; url: string; snippet: string }, i: number) =>
+        `[${i + 1}] ${r.title}\n${r.url}\n${r.snippet}`
+      ).join("\n\n");
+
+      const searchPrompt = `Answer this question using the search results below. Cite sources inline with [1], [2], etc. If the results don't contain enough info, say so.\n\nQuestion: ${query}\n\nSearch Results:\n${searchContext}`;
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const res = await chatStream({
+        conversation_id: id,
+        content: searchPrompt,
+        model: selectedModel || undefined,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        setMessages([...updated, { role: "assistant", content: `Error: ${err.detail || "Search failed"}` }]);
+        setStreaming(false);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No stream");
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let rawContent = "";
+      let rawThinking = "";
+
+      while (true) {
+        if (controller.signal.aborted) break;
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const data = trimmed.slice(6);
+          try {
+            const msg = JSON.parse(data);
+            if (msg.type === "token") {
+              if (msg.content) rawContent += msg.content;
+              if (msg.reasoning) rawThinking += msg.reasoning;
+              const parsed = parseThinkTags(rawContent);
+              if (rawThinking || parsed.thinking) setStreamThinking(rawThinking || parsed.thinking);
+              if (parsed.content) setStreamContent(parsed.content);
+            } else if (msg.type === "done") {
+              const parsed = parseThinkTags(rawContent);
+              const sourcesFooter = "\n\n---\n**Sources:**\n" + results.map((r: { title: string; url: string }, i: number) =>
+                `[${i + 1}] [${r.title}](${r.url})`
+              ).join("\n");
+              setMessages([...updated, {
+                role: "assistant",
+                content: (parsed.content || rawContent || "No response") + sourcesFooter,
+                thinking: rawThinking || parsed.thinking || undefined,
+              }]);
+              setStreamContent("");
+              setStreamThinking("");
+            } else if (msg.type === "error") {
+              setMessages([...updated, { role: "assistant", content: `Error: ${msg.text}` }]);
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        const msg = err instanceof Error ? err.message : "Search failed";
+        setMessages([...updated, { role: "assistant", content: `Error: ${msg}` }]);
+        toast(msg, "error");
+      }
+    } finally {
+      setStreaming(false);
+      setStreamContent("");
+      setStreamThinking("");
+      abortRef.current = null;
     }
   }
 
@@ -813,15 +907,13 @@ export default function ConversationPage() {
               {researchProgress.round > 0 && <span> · Round {researchProgress.round}/5</span>}
               {researchProgress.sources > 0 && <span> · {researchProgress.sources} sources</span>}
             </div>
-            <button onClick={stop} className="text-[12px] px-2 py-1 rounded transition-colors hover:bg-white/10" style={{ color: "var(--fg-muted)" }}>
-              Cancel
-            </button>
+            <button onClick={stop} className="text-[12px] px-2 py-1 rounded transition-colors hover:bg-white/10" style={{ color: "var(--fg-muted)" }}>Cancel</button>
           </div>
         </div>
       )}
 
       {/* Input */}
-      <div className="p-4" style={{ borderTop: researchProgress ? "none" : "1px solid var(--border)", background: "var(--bg)" }}>
+      <div className="px-4 pt-3 pb-2" style={{ borderTop: researchProgress ? "none" : "1px solid var(--border)", background: "var(--bg)" }}>
         <div className="max-w-3xl mx-auto">
           {/* Skills picker dropdown */}
           {showSkills && skillsList.length > 0 && (
@@ -843,93 +935,100 @@ export default function ConversationPage() {
             </div>
           )}
 
-          <div
-            className="flex items-end gap-2 rounded-xl px-3 py-2 transition-colors"
-            style={{
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-            }}
-          >
-            {/* Skills button */}
-            <button
-              onClick={() => { if (!showSkills) loadSkills(); setShowSkills(!showSkills); }}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 hover:bg-white/5"
-              style={{ color: showSkills ? "var(--accent)" : "var(--fg-muted)" }}
-              title="Skills (prompt templates)"
-            >
-              <span className="material-symbols-outlined text-[18px]">psychology</span>
-            </button>
+          {/* Input box */}
+          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+            <div className="flex items-end gap-2 px-3 py-2">
+              <textarea
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  if (e.target.value.endsWith("/")) { loadSkills(); setShowSkills(true); }
+                  else if (showSkills && !e.target.value.includes("/")) setShowSkills(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    chatMode === "research" ? sendResearch() : chatMode === "search" ? sendWithSearch() : send();
+                  }
+                  if (e.key === "Escape") { setShowSkills(false); setShowTools(false); }
+                }}
+                rows={1}
+                className="flex-1 bg-transparent py-1.5 text-[14px] focus:outline-none resize-none max-h-[150px]"
+                style={{ color: "var(--fg)" }}
+                placeholder={chatMode === "research" ? "What would you like to research?" : chatMode === "search" ? "Search the web..." : "Message Switchboard..."}
+                disabled={streaming}
+                onInput={(e) => {
+                  const el = e.target as HTMLTextAreaElement;
+                  el.style.height = "auto";
+                  el.style.height = Math.min(el.scrollHeight, 150) + "px";
+                }}
+              />
+              {streaming ? (
+                <button onClick={stop} className="bg-[#f43f5e] hover:bg-[#e11d48] text-white w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0">
+                  <span className="material-symbols-outlined text-[18px]">stop</span>
+                </button>
+              ) : (
+                <button
+                  onClick={chatMode === "research" ? sendResearch : chatMode === "search" ? sendWithSearch : send}
+                  disabled={!input.trim()}
+                  className="t-btn w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
+                >
+                  <span className="material-symbols-outlined text-[18px]">
+                    {chatMode === "research" ? "travel_explore" : chatMode === "search" ? "search" : "arrow_upward"}
+                  </span>
+                </button>
+              )}
+            </div>
 
-            {/* Research toggle */}
-            <button
-              onClick={() => setResearchMode(!researchMode)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 hover:bg-white/5"
-              style={{ color: researchMode ? "var(--accent)" : "var(--fg-muted)" }}
-              title={researchMode ? "Research mode ON" : "Research mode OFF"}
-            >
-              <span className="material-symbols-outlined text-[18px]">travel_explore</span>
-            </button>
+            {/* Bottom tool bar */}
+            <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderTop: "1px solid var(--border)", background: "var(--bg-muted)" }}>
+              {/* + button */}
+              <button
+                onClick={() => setShowTools(!showTools)}
+                className="w-7 h-7 rounded-md flex items-center justify-center transition-colors hover:bg-white/5"
+                style={{ color: showTools ? "var(--accent)" : "var(--fg-muted)" }}
+                title="More tools"
+              >
+                <span className="material-symbols-outlined text-[18px]" style={{ transform: showTools ? "rotate(45deg)" : "none", transition: "transform 0.2s" }}>add</span>
+              </button>
 
-            <textarea
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                if (e.target.value.endsWith("/")) { loadSkills(); setShowSkills(true); }
-                else if (showSkills && !e.target.value.includes("/")) setShowSkills(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  researchMode ? sendResearch() : send();
-                }
-                if (e.key === "Escape") setShowSkills(false);
-              }}
-              rows={1}
-              className="flex-1 bg-transparent py-1.5 text-[14px] focus:outline-none resize-none max-h-[150px]"
-              style={{ color: "var(--fg)" }}
-              placeholder={researchMode ? "What would you like to research?" : "Message Switchboard..."}
-              disabled={streaming}
-              onInput={(e) => {
-                const el = e.target as HTMLTextAreaElement;
-                el.style.height = "auto";
-                el.style.height = Math.min(el.scrollHeight, 150) + "px";
-              }}
-            />
-            {streaming ? (
+              {/* Tool buttons — always visible */}
               <button
-                onClick={stop}
-                className="bg-[#f43f5e] hover:bg-[#e11d48] text-white w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0"
+                onClick={() => { if (!showSkills) loadSkills(); setShowSkills(!showSkills); setShowTools(false); }}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                style={{ color: showSkills ? "var(--accent)" : "var(--fg-muted)" }}
+                title="Skills (prompt templates)"
               >
-                <span className="material-symbols-outlined text-[18px]">stop</span>
+                <span className="material-symbols-outlined text-[14px]">psychology</span>
+                <span className="hidden sm:inline">Skills</span>
               </button>
-            ) : (
+
               <button
-                onClick={researchMode ? sendResearch : send}
-                disabled={!input.trim()}
-                className="t-btn w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
+                onClick={() => setChatMode(chatMode === "search" ? "chat" : "search")}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                style={chatMode === "search" ? { color: "var(--accent)", background: "var(--accent-subtle)" } : { color: "var(--fg-muted)" }}
+                title="Web search mode"
               >
-                <span className="material-symbols-outlined text-[18px]">
-                  {researchMode ? "travel_explore" : "arrow_upward"}
-                </span>
+                <span className="material-symbols-outlined text-[14px]">search</span>
+                <span className="hidden sm:inline">Search</span>
               </button>
-            )}
-          </div>
-          <div
-            className="flex items-center justify-center gap-3 mt-2 text-[11px] font-[family-name:var(--font-mono)]"
-            style={{ color: "var(--fg-muted)" }}
-          >
-            {researchMode && (
-              <>
-                <span className="flex items-center gap-1" style={{ color: "var(--accent)" }}>
-                  <span className="material-symbols-outlined text-[12px]">travel_explore</span>
-                  Research mode
-                </span>
-                <span>&middot;</span>
-              </>
-            )}
-            <span>Shift+Enter new line</span>
-            <span>&middot;</span>
-            <span>/ for skills</span>
+
+              <button
+                onClick={() => setChatMode(chatMode === "research" ? "chat" : "research")}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                style={chatMode === "research" ? { color: "var(--accent)", background: "var(--accent-subtle)" } : { color: "var(--fg-muted)" }}
+                title="Deep research mode"
+              >
+                <span className="material-symbols-outlined text-[14px]">travel_explore</span>
+                <span className="hidden sm:inline">Research</span>
+              </button>
+
+              <div className="flex-1" />
+              <span className="text-[10px] font-[family-name:var(--font-mono)] hidden sm:block" style={{ color: "var(--fg-muted)" }}>
+                {chatMode !== "chat" && <span style={{ color: "var(--accent)" }}>{chatMode === "search" ? "🔍 Search" : "🌐 Research"} · </span>}
+                / skills · ⇧↵ newline
+              </span>
+            </div>
           </div>
         </div>
       </div>

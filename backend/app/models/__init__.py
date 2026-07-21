@@ -150,6 +150,26 @@ class UserProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class AgentConnection(Base):
+    __tablename__ = "agent_connections"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    hostname: Mapped[str] = mapped_column(String, nullable=False)
+    os: Mapped[str] = mapped_column(String, nullable=False)
+    workspace: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    device_fingerprint: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    device_token_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    tools: Mapped[list] = mapped_column(JSON, nullable=False)
+    agent_version: Mapped[str] = mapped_column(String, default="0.1.0")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
 

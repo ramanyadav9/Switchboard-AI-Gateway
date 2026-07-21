@@ -150,3 +150,12 @@ export const research = {
     });
   },
 };
+
+export const agents = {
+  list: () => apiFetch("/me/agents"),
+  get: (id: string) => apiFetch(`/me/agents/${id}`),
+  approve: (id: string) => apiFetch(`/me/agents/${id}/approve`, { method: "POST" }),
+  exec: (id: string, tool: string, params: object) =>
+    apiFetch(`/me/agents/${id}/exec`, { method: "POST", body: JSON.stringify({ tool, params }) }),
+  disconnect: (id: string) => apiFetch(`/me/agents/${id}`, { method: "DELETE" }),
+};

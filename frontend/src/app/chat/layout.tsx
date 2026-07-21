@@ -240,6 +240,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 { href: "/chat/settings", icon: "settings", label: "Settings" },
                 { href: "/chat/skills", icon: "psychology", label: "Skills" },
                 { href: "/chat/research", icon: "science", label: "Research" },
+                { href: "/chat/agents", icon: "terminal", label: "Agents" },
                 { href: "/dashboard", icon: "dashboard", label: "API Dashboard" },
               ].map((item) => (
                 <Link
@@ -334,7 +335,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
       {/* Main content */}
       <main className="flex-1 flex flex-col min-w-0 md:pt-0 pt-12">
-        {pathname.startsWith("/chat/settings") || pathname.startsWith("/chat/skills") || pathname.startsWith("/chat/research") ? (
+        {pathname.startsWith("/chat/settings") || pathname.startsWith("/chat/skills") || pathname.startsWith("/chat/research") || pathname.startsWith("/chat/agents") ? (
           <div className="flex-1 overflow-y-auto p-6 md:p-8">
             <div className="max-w-[900px] mx-auto">{children}</div>
           </div>

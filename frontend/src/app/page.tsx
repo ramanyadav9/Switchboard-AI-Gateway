@@ -496,16 +496,17 @@ r = client.chat.completions.create({"\n"}
               <pre>
 {`Your Server
   │
-  :2341  Caddy ──┬── /chat/*     → Chat App
-  (public)       ├── /dashboard/* → API Platform
-                 ├── /v1/*       → LLM API
-                 └── /ws/*       → WebSocket STT
+  :41237  Caddy ──┬── /chat/*     → Chat App
+  (only public    ├── /dashboard/* → API Platform
+   port)          ├── /v1/*       → LLM API
+                  └── /ws/*       → WebSocket STT
 
-  Backend ─┬── vLLM        :8000  (Qwen3-14B)
-           ├── Whisper      :8004  (batch STT)
-           ├── SenseVoice   :8006  (live STT)
-           ├── PostgreSQL   :5433  (data)
-           └── Redis        :6380  (cache)`}
+  Internal (Docker bridge network):
+    Backend ─┬── vLLM        :8000  (Qwen3-14B)
+             ├── Whisper      :8004  (batch STT)
+             ├── SenseVoice   :8006  (live STT)
+             ├── PostgreSQL   (data)
+             └── Redis        (cache)`}
               </pre>
             </div>
           </div>

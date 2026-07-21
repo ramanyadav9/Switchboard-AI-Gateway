@@ -1,33 +1,33 @@
 {
-	admin localhost:2018
+	admin off
 }
 
-:2341 {
+:41237 {
 	handle /auth/* {
-		reverse_proxy localhost:8081
+		reverse_proxy backend:8081
 	}
 
 	handle /me/* {
-		reverse_proxy localhost:8081
+		reverse_proxy backend:8081
 	}
 
 	handle /v1/* {
-		reverse_proxy localhost:8081
+		reverse_proxy backend:8081
 	}
 
 	handle /health {
-		reverse_proxy localhost:8081
+		reverse_proxy backend:8081
 	}
 
 	handle /ws/* {
-		reverse_proxy localhost:8081
+		reverse_proxy backend:8081
 	}
 
 	handle_path /api {
-		reverse_proxy localhost:8081
+		reverse_proxy backend:8081
 	}
 
 	handle {
-		reverse_proxy localhost:3000
+		reverse_proxy frontend:3000
 	}
 }

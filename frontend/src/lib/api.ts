@@ -75,7 +75,7 @@ export const conversations = {
     apiFetch(`/me/conversations/${id}/messages?limit=${limit}${before ? `&before=${before}` : ""}`),
 };
 
-export function chatStream(body: { conversation_id: string; content: string; display_content?: string; model?: string; temperature?: number; max_tokens?: number }) {
+export function chatStream(body: { conversation_id: string; content: string; display_content?: string; model?: string; temperature?: number; max_tokens?: number; agent_id?: string }) {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   return fetch(`${API_BASE}/me/chat`, {
     method: "POST",

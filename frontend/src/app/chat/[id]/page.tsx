@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
-import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi } from "@/lib/api";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
 
 type Message = { id?: string; role: string; content: string; thinking?: string };
@@ -305,6 +305,51 @@ function SearchIndicator({ phase, results }: { phase: string; results: { title: 
   );
 }
 
+function ToolCallBlock({ tool, params, result, error, success, duration }: {
+  tool: string; params: Record<string, string>;
+  result?: unknown; error?: string; success?: boolean; duration?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const icons: Record<string, string> = {
+    read_file: "description", write_file: "edit_document", edit_file: "find_replace",
+    bash: "terminal", grep: "search", glob: "folder_open", ls: "folder",
+  };
+  return (
+    <div className="my-2 rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+      <button onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5"
+        style={{ background: "var(--bg-muted)" }}>
+        <span className="material-symbols-outlined text-[14px]" style={{ color: success === false ? "var(--error)" : "var(--accent)" }}>
+          {icons[tool] || "build"}
+        </span>
+        <span className="font-[family-name:var(--font-mono)] font-medium">{tool}</span>
+        {tool === "bash" && params.command && (
+          <span className="font-[family-name:var(--font-mono)] truncate" style={{ color: "var(--fg-muted)" }}>{String(params.command).slice(0, 60)}</span>
+        )}
+        {tool === "read_file" && params.path && (
+          <span className="font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>{String(params.path)}</span>
+        )}
+        {(tool === "write_file" || tool === "edit_file") && params.path && (
+          <span className="font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>{String(params.path)}</span>
+        )}
+        <span className="ml-auto flex items-center gap-2">
+          {duration && <span className="font-[family-name:var(--font-mono)] text-[10px]" style={{ color: "var(--fg-muted)" }}>{duration}ms</span>}
+          {success === true && <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--success)" }}>check_circle</span>}
+          {success === false && <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--error)" }}>error</span>}
+          <span className={`material-symbols-outlined text-[12px] transition-transform ${open ? "rotate-180" : ""}`} style={{ color: "var(--fg-muted)" }}>expand_more</span>
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 py-2 font-[family-name:var(--font-mono)] text-[12px] max-h-[300px] overflow-auto" style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}>
+          {error ? <div style={{ color: "var(--error)" }}>{error}</div> :
+           result ? <pre className="whitespace-pre-wrap">{typeof result === "string" ? result : JSON.stringify(result, null, 2)}</pre> :
+           <div style={{ color: "var(--fg-muted)" }}>Executing...</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MessageContent({ text }: { text: string }) {
   const parts = text.split(/(```[\s\S]*?```)/g);
   return (
@@ -421,9 +466,24 @@ function ModelSelector({
 
 /* ---- Main page ---- */
 
+const SLASH_COMMANDS = [
+  { name: "help", icon: "help", description: "Show all commands" },
+  { name: "compact", icon: "compress", description: "Summarize context to free tokens" },
+  { name: "clear", icon: "delete_sweep", description: "Start new conversation" },
+  { name: "model", icon: "smart_toy", description: "Switch AI model" },
+  { name: "agent", icon: "terminal", description: "Select coding agent" },
+  { name: "skills", icon: "psychology", description: "Browse prompt templates" },
+  { name: "search", icon: "search", description: "Toggle web search mode" },
+  { name: "research", icon: "travel_explore", description: "Toggle deep research mode" },
+  { name: "export", icon: "download", description: "Export conversation as markdown" },
+  { name: "cost", icon: "payments", description: "Show token usage" },
+  { name: "logout", icon: "logout", description: "Disconnect" },
+];
+
 export default function ConversationPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { toast } = useToast();
   const id = params.id as string;
 
@@ -442,6 +502,12 @@ export default function ConversationPage() {
   const [showSkills, setShowSkills] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [skillsList, setSkillsList] = useState<{ id: string; name: string; content: string; category: string }[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<{id: string; name: string; workspace: string; status: string} | null>(null);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [agentsList, setAgentsList] = useState<{id: string; name: string; workspace: string; status: string}[]>([]);
+  const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
+  const [showSlashCommands, setShowSlashCommands] = useState(false);
+  const [slashFilter, setSlashFilter] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const promptApplied = useRef(false);
@@ -501,6 +567,7 @@ export default function ConversationPage() {
       const res = await chatStream({
         conversation_id: id,
         content: userMsg.content,
+        agent_id: selectedAgent?.id,
         ...(selectedModel && selectedModel !== model ? { model: selectedModel } : {}),
       });
 
@@ -550,6 +617,12 @@ export default function ConversationPage() {
               if (thinking) setStreamThinking(thinking);
               if (content) setStreamContent(content);
               else if (rawContent && parsed.thinking) setStreamContent("");
+            } else if (msg.type === "tool_call") {
+              setToolCalls(prev => [...prev, { tool: msg.tool, params: msg.params }]);
+            } else if (msg.type === "tool_result") {
+              setToolCalls(prev => prev.map((tc, i) =>
+                i === prev.length - 1 ? { ...tc, result: msg.result, error: msg.error, success: msg.success, duration: msg.duration_ms } : tc
+              ));
             } else if (msg.type === "done") {
               const parsed = parseThinkTags(rawContent);
               const finalThinking = rawThinking || parsed.thinking;
@@ -564,6 +637,7 @@ export default function ConversationPage() {
               ]);
               setStreamContent("");
               setStreamThinking("");
+              setToolCalls([]);
             } else if (msg.type === "error") {
               toast(`Stream error: ${msg.text}`, "error");
               setMessages([
@@ -572,6 +646,7 @@ export default function ConversationPage() {
               ]);
               setStreamContent("");
               setStreamThinking("");
+              setToolCalls([]);
             }
           } catch {
             /* skip malformed */
@@ -774,6 +849,61 @@ export default function ConversationPage() {
     setShowSkills(false);
   }
 
+  function loadAgents() {
+    agentsApi.list().then(setAgentsList).catch(() => {});
+  }
+
+  function handleSlashCommand(cmd: string) {
+    setShowSlashCommands(false);
+    setInput("");
+    switch (cmd) {
+      case "clear":
+        conversations.create().then((conv: { id: string }) => router.push(`/chat/${conv.id}`)).catch(() => toast("Failed", "error"));
+        break;
+      case "compact":
+        setInput("Please summarize our conversation so far in a few key points.");
+        break;
+      case "model":
+        break;
+      case "agent":
+        loadAgents();
+        setShowAgentPicker(true);
+        break;
+      case "skills":
+        loadSkills();
+        setShowSkills(true);
+        break;
+      case "search":
+        setChatMode(chatMode === "search" ? "chat" : "search");
+        break;
+      case "research":
+        setChatMode(chatMode === "research" ? "chat" : "research");
+        break;
+      case "export": {
+        const md = messages.map(m => `**${m.role}:** ${m.content}`).join("\n\n---\n\n");
+        const blob = new Blob([md], { type: "text/markdown" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "conversation.md"; a.click();
+        URL.revokeObjectURL(url);
+        toast("Exported as markdown", "success");
+        break;
+      }
+      case "help":
+        toast("Type / to see all commands", "info");
+        break;
+      case "cost": {
+        const tokens = messages.reduce((sum, m) => sum + (m.content?.length || 0) / 3, 0);
+        toast(`~${Math.round(tokens)} tokens used in this conversation`, "info");
+        break;
+      }
+      case "logout":
+        localStorage.removeItem("token");
+        router.push("/login");
+        break;
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ color: "var(--fg-muted)" }}>
@@ -899,6 +1029,13 @@ export default function ConversationPage() {
           ))}
 
           {/* Streaming */}
+          {streaming && toolCalls.length > 0 && (
+            <div className="flex justify-start animate-fade-in">
+              <div className="max-w-[85%]">
+                {toolCalls.map((tc, i) => <ToolCallBlock key={i} {...tc} />)}
+              </div>
+            </div>
+          )}
           {streaming && (streamContent || streamThinking) && (
             <div className="flex justify-start animate-fade-in">
               <div className="max-w-[85%]">
@@ -1025,22 +1162,45 @@ export default function ConversationPage() {
             </div>
           )}
 
+          {/* Slash command palette */}
+          {showSlashCommands && (
+            <div className="mb-2 rounded-lg border overflow-hidden max-h-[300px] overflow-y-auto" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+              {SLASH_COMMANDS.filter(c => c.name.includes(slashFilter)).map(cmd => (
+                <button key={cmd.name} onClick={() => handleSlashCommand(cmd.name)}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-white/5">
+                  <span className="material-symbols-outlined text-[16px]" style={{ color: "var(--accent)" }}>{cmd.icon}</span>
+                  <div>
+                    <div className="text-[13px] font-medium font-[family-name:var(--font-mono)]" style={{ color: "var(--fg)" }}>/{cmd.name}</div>
+                    <div className="text-[11px]" style={{ color: "var(--fg-muted)" }}>{cmd.description}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Input box */}
           <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
             <div className="flex items-end gap-2 px-3 py-2">
               <textarea
                 value={input}
                 onChange={(e) => {
-                  setInput(e.target.value);
-                  if (e.target.value.endsWith("/")) { loadSkills(); setShowSkills(true); }
-                  else if (showSkills && !e.target.value.includes("/")) setShowSkills(false);
+                  const val = e.target.value;
+                  setInput(val);
+                  if (val.startsWith("/")) {
+                    setShowSlashCommands(true);
+                    setSlashFilter(val.slice(1).toLowerCase());
+                  } else {
+                    setShowSlashCommands(false);
+                  }
+                  if (val.endsWith("/")) { loadSkills(); setShowSkills(true); }
+                  else if (showSkills && !val.includes("/")) setShowSkills(false);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     chatMode === "research" ? sendResearch() : chatMode === "search" ? sendWithSearch() : send();
                   }
-                  if (e.key === "Escape") { setShowSkills(false); setShowTools(false); }
+                  if (e.key === "Escape") { setShowSkills(false); setShowTools(false); setShowSlashCommands(false); setShowAgentPicker(false); }
                 }}
                 rows={1}
                 className="flex-1 bg-transparent py-1.5 text-[14px] focus:outline-none resize-none max-h-[150px]"
@@ -1112,6 +1272,33 @@ export default function ConversationPage() {
                 <span className="material-symbols-outlined text-[14px]">travel_explore</span>
                 <span className="hidden sm:inline">Research</span>
               </button>
+
+              {/* Agent selector */}
+              <div className="relative">
+                <button
+                  onClick={() => { loadAgents(); setShowAgentPicker(!showAgentPicker); }}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                  style={selectedAgent ? { color: "var(--accent)", background: "var(--accent-subtle)" } : { color: "var(--fg-muted)" }}
+                >
+                  <span className="material-symbols-outlined text-[14px]">terminal</span>
+                  <span className="hidden sm:inline">{selectedAgent ? selectedAgent.name : "Agent"}</span>
+                </button>
+                {showAgentPicker && agentsList.length > 0 && (
+                  <div className="absolute bottom-full left-0 mb-1 rounded-lg border overflow-hidden min-w-[200px] z-50" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+                    <button onClick={() => { setSelectedAgent(null); setShowAgentPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5" style={{ color: "var(--fg-secondary)" }}>
+                      <span className="material-symbols-outlined text-[14px]">close</span> No agent
+                    </button>
+                    {agentsList.filter(a => a.status === "online").map(agent => (
+                      <button key={agent.id} onClick={() => { setSelectedAgent(agent); setShowAgentPicker(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5"
+                        style={{ color: selectedAgent?.id === agent.id ? "var(--accent)" : "var(--fg-secondary)" }}>
+                        <span className="w-2 h-2 rounded-full" style={{ background: "var(--success)" }} />
+                        {agent.name} <span style={{ color: "var(--fg-muted)" }}>&middot; {agent.workspace}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="flex-1" />
               <span className="text-[10px] font-[family-name:var(--font-mono)] hidden sm:block" style={{ color: "var(--fg-muted)" }}>

@@ -35,6 +35,7 @@ class ChatRequest(BaseModel):
     content: str
     display_content: str | None = None
     model: str | None = None
+    agent_id: str | None = None
     temperature: float = 0.7
     max_tokens: int = 2048
     stream: bool = True
@@ -162,7 +163,8 @@ async def chat_sse(
             raise HTTPException(status_code=403, detail=f"Key not authorized for model '{model}'")
 
     # Build context
-    ctx = build_prompt(conv, content, db)
+    has_agent = bool(body.agent_id)
+    ctx = build_prompt(conv, content, db, agent_tools=has_agent)
 
     http_client = request.app.state.http_client
 
@@ -171,6 +173,13 @@ async def chat_sse(
     ext = resolve_provider(user_providers, model)
     llm_base = ext["base_url"] if ext else settings.VLLM_LLM_BASE_URL
     llm_key = ext["api_key"] if ext else settings.VLLM_API_KEY
+
+    if has_agent:
+        return StreamingResponse(
+            _agentic_sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, body.agent_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     if not body.stream:
         return await _non_streaming(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key)
@@ -271,6 +280,145 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'latency_ms': latency_ms}})}\n\n"
+
+
+async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None):
+    from app.routes.ws_agent import execute_tool
+    from app.services.agent_tools import TOOL_DEFINITIONS
+
+    incr_active_generations(user_id)
+    base = llm_base or settings.VLLM_LLM_BASE_URL
+    key = llm_key or settings.VLLM_API_KEY
+    messages = list(ctx.messages)
+    total_prompt = 0
+    total_completion = 0
+    start_time = time.time()
+    max_turns = 10
+
+    try:
+        for turn in range(max_turns):
+            raw_content = ""
+            raw_thinking = ""
+            tool_calls_accum: dict[int, dict] = {}
+            finish_reason = ""
+
+            try:
+                async with http_client.stream(
+                    "POST", f"{base}/v1/chat/completions",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+                    json={
+                        "model": model, "messages": messages, "stream": True,
+                        "temperature": temperature, "max_tokens": max_tokens,
+                        "tools": TOOL_DEFINITIONS,
+                    },
+                ) as response:
+                    if response.status_code >= 400:
+                        error_body = await response.aread()
+                        yield f"data: {json.dumps({'type': 'error', 'text': error_body.decode(errors='replace')})}\n\n"
+                        return
+
+                    buffer = ""
+                    async for chunk in response.aiter_text():
+                        buffer += chunk
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            line = line.strip()
+                            if not line.startswith("data: "):
+                                continue
+                            data = line[6:]
+                            if data == "[DONE]":
+                                break
+                            try:
+                                parsed = json.loads(data)
+                                choice = parsed.get("choices", [{}])[0]
+                                delta = choice.get("delta", {})
+                                finish_reason = choice.get("finish_reason", "") or finish_reason
+                                usage = parsed.get("usage")
+                                if usage:
+                                    total_prompt = usage.get("prompt_tokens", 0)
+                                    total_completion += usage.get("completion_tokens", 0)
+
+                                c = delta.get("content", "")
+                                r = delta.get("reasoning_content", "")
+                                if c or r:
+                                    evt: dict = {"type": "token"}
+                                    if c:
+                                        raw_content += c
+                                        evt["content"] = c
+                                    if r:
+                                        raw_thinking += r
+                                        evt["reasoning"] = r
+                                    yield f"data: {json.dumps(evt)}\n\n"
+
+                                for tc_delta in delta.get("tool_calls", []):
+                                    idx = tc_delta.get("index", 0)
+                                    if idx not in tool_calls_accum:
+                                        tool_calls_accum[idx] = {"id": "", "name": "", "arguments": ""}
+                                    if tc_delta.get("id"):
+                                        tool_calls_accum[idx]["id"] = tc_delta["id"]
+                                    fn = tc_delta.get("function", {})
+                                    if fn.get("name"):
+                                        tool_calls_accum[idx]["name"] = fn["name"]
+                                    if fn.get("arguments"):
+                                        tool_calls_accum[idx]["arguments"] += fn["arguments"]
+                            except json.JSONDecodeError:
+                                pass
+
+            except httpx.RequestError as e:
+                yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+                return
+
+            if not tool_calls_accum:
+                think_match = re.match(r"^<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
+                if think_match:
+                    raw_thinking = raw_thinking or think_match.group(1).strip()
+                    raw_content = think_match.group(2).strip()
+                break
+
+            assistant_msg: dict = {"role": "assistant", "content": raw_content or None, "tool_calls": []}
+            for idx in sorted(tool_calls_accum.keys()):
+                tc = tool_calls_accum[idx]
+                assistant_msg["tool_calls"].append({
+                    "id": tc["id"], "type": "function",
+                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                })
+            messages.append(assistant_msg)
+
+            for idx in sorted(tool_calls_accum.keys()):
+                tc = tool_calls_accum[idx]
+                try:
+                    params = json.loads(tc["arguments"])
+                except json.JSONDecodeError:
+                    params = {}
+                yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc['name'], 'params': params})}\n\n"
+
+                try:
+                    result = await execute_tool(agent_id, tc["name"], params)
+                except Exception as e:
+                    result = {"success": False, "error": str(e)}
+
+                yield f"data: {json.dumps({'type': 'tool_result', 'tool': tc['name'], 'success': result.get('success', False), 'result': result.get('result'), 'error': result.get('error'), 'duration_ms': result.get('duration_ms')})}\n\n"
+
+                messages.append({
+                    "role": "tool", "tool_call_id": tc["id"],
+                    "content": json.dumps(result.get("result", {}) if result.get("success") else {"error": result.get("error", "Unknown error")}),
+                })
+
+    finally:
+        decr_active_generations(user_id)
+
+    latency_ms = int((time.time() - start_time) * 1000)
+
+    user_tokens = estimate_tokens(user_content)
+    assistant_tokens = total_completion or estimate_tokens(raw_content)
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
+    loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
+    loop.run_in_executor(None, _auto_title, conversation_id, user_content)
+    loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
+
+    yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': total_prompt, 'completion_tokens': total_completion, 'latency_ms': latency_ms}})}\n\n"
 
 
 async def _non_streaming(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None):

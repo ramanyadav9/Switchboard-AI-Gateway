@@ -16,6 +16,10 @@ API_KEY="${SWITCHBOARD_KEY:-}"
 AGENT_NAME=""
 NO_MODIFY_PATH=false
 INSTALL_DIR="$HOME/.switchboard"
+# On Windows (Git Bash/MSYS), use the real Windows home so CMD/PowerShell can find it
+if [ -n "${USERPROFILE:-}" ] && command -v cygpath &>/dev/null; then
+    INSTALL_DIR="$(cygpath "$USERPROFILE")/.switchboard"
+fi
 
 # ─── CLI args ────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -220,10 +224,11 @@ chmod +x "$INSTALL_DIR/bin/switchboard-agent"
 # Windows: also create a .cmd wrapper for CMD/PowerShell
 if [ "$IS_WINDOWS" = true ]; then
     INSTALL_DIR_WIN=$(cygpath -w "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")
+    PYTHON_PATH_WIN=$(cygpath -w "$PYTHON_PATH" 2>/dev/null || echo "$PYTHON_PATH")
     cat > "$INSTALL_DIR/bin/switchboard-agent.cmd" << CMDWRAP
 @echo off
-set "PYTHONPATH=$INSTALL_DIR_WIN\\vendor;$INSTALL_DIR_WIN\\agent;%PYTHONPATH%"
-"$PYTHON_PATH" -m switchboard_agent %*
+set "PYTHONPATH=${INSTALL_DIR_WIN}\\vendor;${INSTALL_DIR_WIN}\\agent;%PYTHONPATH%"
+"${PYTHON_PATH_WIN}" -m switchboard_agent %*
 CMDWRAP
     success "Launchers created (bash + cmd)"
 else
@@ -272,6 +277,15 @@ if [ "$NO_MODIFY_PATH" = false ]; then
                 echo "# Switchboard Agent" >> "$CONFIG_FILE"
                 echo "$PATH_LINE" >> "$CONFIG_FILE"
                 success "Added to $CONFIG_FILE"
+            fi
+
+            # Windows: add to user PATH via setx (works for CMD + PowerShell)
+            if [ "$IS_WINDOWS" = true ]; then
+                BIN_DIR_WIN=$(cygpath -w "$BIN_DIR" 2>/dev/null || echo "$BIN_DIR")
+                CURRENT_PATH=$(cmd.exe //c "echo %PATH%" 2>/dev/null | tr -d '\r' || echo "")
+                if [[ "$CURRENT_PATH" != *"$BIN_DIR_WIN"* ]]; then
+                    setx PATH "$BIN_DIR_WIN;%PATH%" &>/dev/null && success "Added to Windows PATH (restart terminal)" || warn "Could not update Windows PATH — add $BIN_DIR_WIN manually"
+                fi
             fi
 
             # GitHub Actions

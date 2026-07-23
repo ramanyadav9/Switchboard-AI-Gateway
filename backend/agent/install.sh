@@ -135,7 +135,7 @@ if [ -z "$SERVER_URL" ]; then
     echo -e "  ${DIM}Enter your Switchboard server URL${NC}"
     echo -e "  ${DIM}Example: http://your-server:41237${NC}"
     echo ""
-    read -p "  Server URL: " SERVER_URL
+    read -p "  Server URL: " SERVER_URL < /dev/tty
     echo ""
 fi
 
@@ -284,7 +284,7 @@ if [ -z "$API_KEY" ]; then
     echo ""
     echo -e "  ${DIM}Enter your API key (from Dashboard > API Keys)${NC}"
     echo ""
-    read -p "  API key: " API_KEY
+    read -p "  API key: " API_KEY < /dev/tty
     echo ""
 fi
 
@@ -296,7 +296,7 @@ CONNECT_ARGS=("$SERVER_URL" --key "$API_KEY")
 if [ -n "$AGENT_NAME" ]; then
     CONNECT_ARGS+=(--name "$AGENT_NAME")
 else
-    read -p "  Agent name (Enter for auto): " AGENT_NAME
+    read -p "  Agent name (Enter for auto): " AGENT_NAME < /dev/tty
     if [ -n "$AGENT_NAME" ]; then
         CONNECT_ARGS+=(--name "$AGENT_NAME")
     fi

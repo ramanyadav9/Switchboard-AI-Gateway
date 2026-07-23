@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -197,13 +197,19 @@ async def revoke_agent(
 
 
 @install_router.get("/install", response_class=PlainTextResponse)
-def get_install_script():
+def get_install_script(request: Request):
     script_path = os.path.join(os.path.dirname(__file__), "..", "..", "agent", "install.sh")
     script_path = os.path.normpath(script_path)
     if not os.path.isfile(script_path):
         raise HTTPException(status_code=404, detail="Install script not found")
     with open(script_path, "r", encoding="utf-8") as f:
-        return PlainTextResponse(content=f.read(), media_type="text/plain")
+        content = f.read()
+    origin = f"{request.url.scheme}://{request.url.netloc}"
+    content = content.replace(
+        'SERVER_URL="${SWITCHBOARD_SERVER:-}"',
+        f'SERVER_URL="${{SWITCHBOARD_SERVER:-{origin}}}"',
+    )
+    return PlainTextResponse(content=content, media_type="text/plain")
 
 
 @install_router.get("/install.ps1", response_class=PlainTextResponse)

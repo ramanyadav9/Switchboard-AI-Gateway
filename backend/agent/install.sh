@@ -16,15 +16,14 @@ API_KEY="${SWITCHBOARD_KEY:-}"
 AGENT_NAME=""
 NO_MODIFY_PATH=false
 INSTALL_DIR="$HOME/.switchboard"
-BIN_DIR="$INSTALL_DIR/bin"
 
 # ─── CLI args ────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --server)       SERVER_URL="$2"; shift 2 ;;
-        --key)          API_KEY="$2"; shift 2 ;;
-        --name)         AGENT_NAME="$2"; shift 2 ;;
-        --no-modify-path) NO_MODIFY_PATH=true; shift ;;
+        --server)          SERVER_URL="$2"; shift 2 ;;
+        --key)             API_KEY="$2"; shift 2 ;;
+        --name)            AGENT_NAME="$2"; shift 2 ;;
+        --no-modify-path)  NO_MODIFY_PATH=true; shift ;;
         --help|-h)
             echo "Switchboard Agent Installer"
             echo ""
@@ -72,71 +71,46 @@ step "Detecting system"
 OS="$(uname -s 2>/dev/null || echo "Unknown")"
 ARCH="$(uname -m 2>/dev/null || echo "Unknown")"
 
+IS_WINDOWS=false
 case "$OS" in
-    Linux*)   OS_NAME="Linux" ;;
-    Darwin*)  OS_NAME="macOS" ;;
-    MINGW*|MSYS*|CYGWIN*) OS_NAME="Windows (Git Bash)" ;;
-    *)        OS_NAME="$OS" ;;
+    Linux*)                OS_NAME="Linux" ;;
+    Darwin*)               OS_NAME="macOS" ;;
+    MINGW*|MSYS*|CYGWIN*)  OS_NAME="Windows"; IS_WINDOWS=true ;;
+    *)                     OS_NAME="$OS" ;;
 esac
 
 case "$ARCH" in
-    x86_64|amd64) ARCH_NAME="x64" ;;
-    aarch64|arm64) ARCH_NAME="arm64" ;;
-    *)            ARCH_NAME="$ARCH" ;;
+    x86_64|amd64)   ARCH_NAME="x64" ;;
+    aarch64|arm64)   ARCH_NAME="arm64" ;;
+    *)               ARCH_NAME="$ARCH" ;;
 esac
 
 info "$OS_NAME $ARCH_NAME"
 
-# ─── Find Python ────────────────────────────────────────────
+# ─── Find Python 3.10+ ──────────────────────────────────────
 step "Checking Python"
 
 PYTHON=""
 PY_VERSION=""
-PYTHON_FALLBACK=""
-PY_FALLBACK_VER=""
-
-# On Windows (Git Bash / MSYS), the MSYS python3 often has no pip.
-# Try Windows-native Python first (py launcher, python.exe), then MSYS python3.
-IS_WINDOWS=false
-case "$OS" in
-    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=true ;;
-esac
 
 if [ "$IS_WINDOWS" = true ]; then
-    PYTHON_CANDIDATES=("py" "python" "python3" "python.exe" "py.exe")
+    CANDIDATES=("py" "python" "python3" "python.exe" "py.exe")
 else
-    PYTHON_CANDIDATES=("python3" "python" "py")
+    CANDIDATES=("python3" "python" "py")
 fi
 
-check_python() {
-    local cmd="$1"
-    local ver major minor
-    command -v "$cmd" &>/dev/null || return 1
-    ver=$("$cmd" -c "import sys; v=sys.version_info; print(f'{v.major}.{v.minor}')" 2>/dev/null) || return 1
-    major=$(echo "$ver" | cut -d. -f1)
-    minor=$(echo "$ver" | cut -d. -f2)
-    [ "$major" -ge 3 ] && [ "$minor" -ge 10 ] || return 1
-    echo "$ver"
-    return 0
-}
-
-for cmd in "${PYTHON_CANDIDATES[@]}"; do
-    ver=$(check_python "$cmd" 2>/dev/null) || continue
-    if "$cmd" -m pip --version &>/dev/null; then
-        PYTHON="$cmd"
-        PY_VERSION="$ver"
-        break
-    elif [ -z "$PYTHON_FALLBACK" ]; then
-        PYTHON_FALLBACK="$cmd"
-        PY_FALLBACK_VER="$ver"
+for cmd in "${CANDIDATES[@]}"; do
+    if command -v "$cmd" &>/dev/null; then
+        ver=$("$cmd" -c "import sys; v=sys.version_info; print(f'{v.major}.{v.minor}')" 2>/dev/null) || continue
+        major=$(echo "$ver" | cut -d. -f1)
+        minor=$(echo "$ver" | cut -d. -f2)
+        if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
+            PYTHON="$cmd"
+            PY_VERSION="$ver"
+            break
+        fi
     fi
 done
-
-# Use fallback (Python without pip) only if nothing better found
-if [ -z "$PYTHON" ] && [ -n "$PYTHON_FALLBACK" ]; then
-    PYTHON="$PYTHON_FALLBACK"
-    PY_VERSION="$PY_FALLBACK_VER"
-fi
 
 if [ -z "$PYTHON" ]; then
     fail "Python 3.10+ is required. Install from https://python.org"
@@ -144,54 +118,13 @@ fi
 
 success "Python $PY_VERSION ($PYTHON)"
 
-# ─── Ensure pip ──────────────────────────────────────────────
-step "Checking pip"
-
-ensure_pip() {
-    if "$PYTHON" -m pip --version &>/dev/null; then
-        return 0
-    fi
-
-    info "pip not found, attempting to install..."
-
-    # Method 1: ensurepip
-    if "$PYTHON" -m ensurepip --upgrade &>/dev/null 2>&1; then
-        if "$PYTHON" -m pip --version &>/dev/null; then
-            info "Installed via ensurepip"
-            return 0
-        fi
-    fi
-
-    # Method 2: get-pip.py
-    info "Trying get-pip.py..."
-    local tmp
-    tmp=$(mktemp -d 2>/dev/null || mktemp -d -t 'switchboard')
-    if curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$tmp/get-pip.py" 2>/dev/null; then
-        if "$PYTHON" "$tmp/get-pip.py" --quiet 2>/dev/null; then
-            rm -rf "$tmp"
-            if "$PYTHON" -m pip --version &>/dev/null; then
-                info "Installed via get-pip.py"
-                return 0
-            fi
-        fi
-        rm -rf "$tmp"
-    fi
-
-    return 1
-}
-
-if ! ensure_pip; then
-    echo ""
-    fail "Could not install pip. Install manually:\n    $PYTHON -m ensurepip --upgrade\n    or: curl https://bootstrap.pypa.io/get-pip.py | $PYTHON"
-fi
-
-PIP_VER=$("$PYTHON" -m pip --version 2>/dev/null | awk '{print $2}')
-success "pip $PIP_VER"
-
 # ─── Check existing install ─────────────────────────────────
-if command -v switchboard-agent &>/dev/null; then
-    CURRENT=$(switchboard-agent --version 2>/dev/null || echo "unknown")
-    info "Existing installation found: $CURRENT"
+if [ -d "$INSTALL_DIR/agent" ]; then
+    CURRENT=$("$PYTHON" -c "
+import sys; sys.path.insert(0,'$INSTALL_DIR/agent')
+from switchboard_agent import __version__; print(__version__)
+" 2>/dev/null || echo "unknown")
+    info "Existing installation found: v$CURRENT"
 fi
 
 # ─── Get server URL ─────────────────────────────────────────
@@ -212,16 +145,15 @@ if [ -z "$SERVER_URL" ]; then
     fail "Server URL is required"
 fi
 
-# Verify server is reachable
 info "Checking server..."
 if ! curl -fsSL --max-time 10 "$SERVER_URL/health" &>/dev/null; then
-    warn "Server at $SERVER_URL is not responding — continuing anyway"
+    warn "Server at $SERVER_URL not responding — continuing anyway"
 else
     success "Server reachable"
 fi
 
-# ─── Download agent package ─────────────────────────────────
-step "Downloading agent package"
+# ─── Download ────────────────────────────────────────────────
+step "Downloading"
 
 TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'switchboard')
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -231,97 +163,120 @@ info "$DOWNLOAD_URL"
 
 if ! curl -fSL --progress-bar --max-time 60 "$DOWNLOAD_URL" -o "$TMP_DIR/agent.tar.gz" 2>&1; then
     echo ""
-    fail "Download failed. Make sure the server is running and accessible."
+    fail "Download failed. Is the server running?"
 fi
 
 success "Downloaded"
 
-# ─── Extract and install ────────────────────────────────────
-step "Installing"
+# ─── Install (no pip — pure extract) ────────────────────────
+step "Installing to $INSTALL_DIR"
 
 tar xzf "$TMP_DIR/agent.tar.gz" -C "$TMP_DIR" 2>/dev/null || fail "Failed to extract package"
 
-# Try normal install, fall back to --user, then --break-system-packages
-INSTALL_CMD="$PYTHON -m pip install --quiet"
-if $INSTALL_CMD "$TMP_DIR/switchboard-agent" 2>/dev/null; then
-    : # success
-elif $INSTALL_CMD --user "$TMP_DIR/switchboard-agent" 2>/dev/null; then
-    info "Installed to user site-packages (--user)"
-elif $INSTALL_CMD --break-system-packages "$TMP_DIR/switchboard-agent" 2>/dev/null; then
-    info "Installed with --break-system-packages"
+# Create install directory
+mkdir -p "$INSTALL_DIR/bin"
+mkdir -p "$INSTALL_DIR/agent"
+mkdir -p "$INSTALL_DIR/vendor"
+
+# Copy agent source
+if [ -d "$TMP_DIR/switchboard-agent/switchboard_agent" ]; then
+    rm -rf "$INSTALL_DIR/agent/switchboard_agent"
+    cp -r "$TMP_DIR/switchboard-agent/switchboard_agent" "$INSTALL_DIR/agent/switchboard_agent"
+    success "Agent source installed"
 else
-    echo ""
-    fail "pip install failed. Try in a virtual environment:\n    $PYTHON -m venv ~/.switchboard/venv\n    source ~/.switchboard/venv/bin/activate\n    Then re-run this installer."
+    fail "Package missing switchboard_agent/ directory"
 fi
 
-# Verify the command exists
-if ! command -v switchboard-agent &>/dev/null; then
-    # Check common user bin locations
-    USER_BIN=$("$PYTHON" -c "import site; print(site.getusersitepackages().replace('lib/python','bin').split('/lib/')[0]+'/bin')" 2>/dev/null || echo "")
-    if [ -n "$USER_BIN" ] && [ -f "$USER_BIN/switchboard-agent" ]; then
-        warn "Installed but not on PATH: $USER_BIN"
-        export PATH="$USER_BIN:$PATH"
-    fi
+# Copy vendored dependencies (websockets)
+if [ -d "$TMP_DIR/switchboard-agent/vendor" ]; then
+    rm -rf "$INSTALL_DIR/vendor/websockets"
+    cp -r "$TMP_DIR/switchboard-agent/vendor/websockets" "$INSTALL_DIR/vendor/websockets"
+    success "Dependencies installed"
+else
+    warn "No vendored dependencies found — websockets must be installed separately"
 fi
 
-INSTALLED_VER=$(switchboard-agent --version 2>/dev/null || echo "0.1.0")
-success "switchboard-agent $INSTALLED_VER"
+# ─── Create wrapper script ──────────────────────────────────
+step "Creating launcher"
+
+# Resolve the Python path for the wrapper
+PYTHON_PATH=$(command -v "$PYTHON")
+
+cat > "$INSTALL_DIR/bin/switchboard-agent" << WRAPPER
+#!/usr/bin/env bash
+export PYTHONPATH="$INSTALL_DIR/vendor:$INSTALL_DIR/agent:\${PYTHONPATH:-}"
+exec "$PYTHON_PATH" -m switchboard_agent "\$@"
+WRAPPER
+chmod +x "$INSTALL_DIR/bin/switchboard-agent"
+
+# Windows: also create a .cmd wrapper for CMD/PowerShell
+if [ "$IS_WINDOWS" = true ]; then
+    INSTALL_DIR_WIN=$(cygpath -w "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")
+    cat > "$INSTALL_DIR/bin/switchboard-agent.cmd" << CMDWRAP
+@echo off
+set "PYTHONPATH=$INSTALL_DIR_WIN\\vendor;$INSTALL_DIR_WIN\\agent;%PYTHONPATH%"
+"$PYTHON_PATH" -m switchboard_agent %*
+CMDWRAP
+    success "Launchers created (bash + cmd)"
+else
+    success "Launcher created"
+fi
+
+# ─── Verify ──────────────────────────────────────────────────
+export PYTHONPATH="$INSTALL_DIR/vendor:$INSTALL_DIR/agent:${PYTHONPATH:-}"
+INSTALLED_VER=$("$PYTHON_PATH" -c "from switchboard_agent import __version__; print(__version__)" 2>/dev/null || echo "0.1.0")
+success "switchboard-agent v$INSTALLED_VER"
 
 # ─── Update PATH ────────────────────────────────────────────
-if [ "$NO_MODIFY_PATH" = false ] && ! command -v switchboard-agent &>/dev/null; then
-    step "Updating PATH"
+BIN_DIR="$INSTALL_DIR/bin"
 
-    # Find where pip installed the script
-    SCRIPT_DIR=$("$PYTHON" -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>/dev/null || echo "")
-    if [ -z "$SCRIPT_DIR" ]; then
-        SCRIPT_DIR=$("$PYTHON" -c "import site; print(site.getusersitepackages().replace('site-packages','../../bin'))" 2>/dev/null || echo "")
-    fi
+if [ "$NO_MODIFY_PATH" = false ]; then
+    case ":$PATH:" in
+        *":$BIN_DIR:"*) ;; # already on PATH
+        *)
+            step "Updating PATH"
 
-    if [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR" ]; then
-        PATH_LINE="export PATH=\"$SCRIPT_DIR:\$PATH\""
+            SHELL_NAME=$(basename "${SHELL:-/bin/bash}")
+            CONFIG_FILE=""
+            PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\""
 
-        # Detect shell config file
-        SHELL_NAME=$(basename "${SHELL:-/bin/bash}")
-        CONFIG_FILE=""
+            case "$SHELL_NAME" in
+                fish)
+                    CONFIG_FILE="$HOME/.config/fish/config.fish"
+                    PATH_LINE="set -gx PATH $BIN_DIR \$PATH"
+                    ;;
+                zsh)
+                    for f in "$HOME/.zshrc" "$HOME/.zshenv"; do
+                        [ -f "$f" ] && CONFIG_FILE="$f" && break
+                    done
+                    [ -z "$CONFIG_FILE" ] && CONFIG_FILE="$HOME/.zshrc"
+                    ;;
+                *)
+                    for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+                        [ -f "$f" ] && CONFIG_FILE="$f" && break
+                    done
+                    [ -z "$CONFIG_FILE" ] && CONFIG_FILE="$HOME/.bashrc"
+                    ;;
+            esac
 
-        case "$SHELL_NAME" in
-            fish)
-                CONFIG_FILE="$HOME/.config/fish/config.fish"
-                PATH_LINE="set -gx PATH $SCRIPT_DIR \$PATH"
-                ;;
-            zsh)
-                for f in "$HOME/.zshrc" "$HOME/.zshenv"; do
-                    [ -f "$f" ] && CONFIG_FILE="$f" && break
-                done
-                [ -z "$CONFIG_FILE" ] && CONFIG_FILE="$HOME/.zshrc"
-                ;;
-            *)
-                for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-                    [ -f "$f" ] && CONFIG_FILE="$f" && break
-                done
-                [ -z "$CONFIG_FILE" ] && CONFIG_FILE="$HOME/.bashrc"
-                ;;
-        esac
+            if [ -n "$CONFIG_FILE" ] && ! grep -qF "$BIN_DIR" "$CONFIG_FILE" 2>/dev/null; then
+                echo "" >> "$CONFIG_FILE"
+                echo "# Switchboard Agent" >> "$CONFIG_FILE"
+                echo "$PATH_LINE" >> "$CONFIG_FILE"
+                success "Added to $CONFIG_FILE"
+            fi
 
-        # Add if not already present
-        if [ -n "$CONFIG_FILE" ] && ! grep -qF "switchboard" "$CONFIG_FILE" 2>/dev/null; then
-            echo "" >> "$CONFIG_FILE"
-            echo "# Switchboard Agent" >> "$CONFIG_FILE"
-            echo "$PATH_LINE" >> "$CONFIG_FILE"
-            success "Added to $CONFIG_FILE"
-            info "Restart your shell or run: source $CONFIG_FILE"
-        fi
+            # GitHub Actions
+            if [ -n "${GITHUB_PATH:-}" ]; then
+                echo "$BIN_DIR" >> "$GITHUB_PATH"
+            fi
 
-        # Also add to GITHUB_PATH for CI
-        if [ -n "${GITHUB_PATH:-}" ]; then
-            echo "$SCRIPT_DIR" >> "$GITHUB_PATH"
-        fi
-
-        export PATH="$SCRIPT_DIR:$PATH"
-    fi
+            export PATH="$BIN_DIR:$PATH"
+            ;;
+    esac
 fi
 
-# ─── Connect to server ──────────────────────────────────────
+# ─── Connect ────────────────────────────────────────────────
 echo ""
 step "Connecting to server"
 
@@ -347,7 +302,7 @@ else
     fi
 fi
 
-switchboard-agent connect "${CONNECT_ARGS[@]}" || fail "Connection failed"
+"$INSTALL_DIR/bin/switchboard-agent" connect "${CONNECT_ARGS[@]}" || fail "Connection failed"
 
 # ─── Done ────────────────────────────────────────────────────
 echo ""

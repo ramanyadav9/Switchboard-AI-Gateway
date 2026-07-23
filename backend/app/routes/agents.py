@@ -221,16 +221,37 @@ def get_agent_source():
     agent_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "agent"))
     if not os.path.isdir(agent_dir):
         raise HTTPException(status_code=404, detail="Agent package not found")
+
+    skip_dirs = {"__pycache__", ".egg-info", "dist", "build", ".git"}
+
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for root, dirs, files in os.walk(agent_dir):
-            dirs[:] = [d for d in dirs if d not in ("__pycache__", ".egg-info", "dist", "build", ".git")]
+        # Add agent source under switchboard-agent/switchboard_agent/
+        src_dir = os.path.join(agent_dir, "switchboard_agent")
+        for root, dirs, files in os.walk(src_dir):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
             for f in files:
                 if f.endswith((".pyc", ".pyo")):
                     continue
                 full = os.path.join(root, f)
-                arcname = os.path.join("switchboard-agent", os.path.relpath(full, agent_dir))
+                arcname = os.path.join("switchboard-agent", "switchboard_agent", os.path.relpath(full, src_dir))
                 tar.add(full, arcname=arcname)
+
+        # Vendor websockets into switchboard-agent/vendor/
+        try:
+            import websockets as _ws
+            ws_dir = os.path.dirname(_ws.__file__)
+            for root, dirs, files in os.walk(ws_dir):
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
+                for f in files:
+                    if f.endswith((".pyc", ".pyo")):
+                        continue
+                    full = os.path.join(root, f)
+                    arcname = os.path.join("switchboard-agent", "vendor", "websockets", os.path.relpath(full, ws_dir))
+                    tar.add(full, arcname=arcname)
+        except ImportError:
+            pass
+
     buf.seek(0)
     return Response(
         content=buf.read(),

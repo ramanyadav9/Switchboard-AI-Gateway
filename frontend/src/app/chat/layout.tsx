@@ -160,13 +160,29 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             <span className="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
-        <button
-          onClick={handleNewChat}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 t-btn text-[13px] font-medium rounded transition-colors"
-        >
-          <span className="material-symbols-outlined text-[16px]">add</span>
-          New Chat
-        </button>
+        <div className="flex gap-1.5">
+          <button
+            onClick={handleNewChat}
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 t-btn text-[13px] font-medium rounded transition-colors"
+          >
+            <span className="material-symbols-outlined text-[16px]">add</span>
+            Chat
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const conv = await conversations.create();
+                router.push(`/chat/agent/${conv.id}`);
+              } catch { toast("Failed to create agent session", "error"); }
+            }}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded text-[13px] font-medium transition-colors hover:bg-white/5"
+            style={{ border: "1px solid var(--border)", color: "var(--fg-secondary)" }}
+            title="New Agent Session"
+          >
+            <span className="material-symbols-outlined text-[16px]">terminal</span>
+            Agent
+          </button>
+        </div>
         {/* Search */}
         <div className="relative mt-2">
           <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-[14px]" style={{ color: "var(--fg-muted)" }}>search</span>
@@ -335,7 +351,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
       {/* Main content */}
       <main className="flex-1 flex flex-col min-w-0 md:pt-0 pt-12">
-        {pathname.startsWith("/chat/settings") || pathname.startsWith("/chat/skills") || pathname.startsWith("/chat/research") || pathname.startsWith("/chat/agents") ? (
+        {pathname.startsWith("/chat/settings") || pathname.startsWith("/chat/skills") || pathname.startsWith("/chat/research") || (pathname === "/chat/agents") ? (
           <div className="flex-1 overflow-y-auto p-6 md:p-8">
             <div className="max-w-[900px] mx-auto">{children}</div>
           </div>

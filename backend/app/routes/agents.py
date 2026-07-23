@@ -1,12 +1,14 @@
+import io
 import os
 import secrets
+import tarfile
 import time
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -212,3 +214,26 @@ def get_install_script_ps1():
         raise HTTPException(status_code=404, detail="Install script not found")
     with open(script_path, "r", encoding="utf-8") as f:
         return PlainTextResponse(content=f.read(), media_type="text/x-powershell")
+
+
+@install_router.get("/agent-source")
+def get_agent_source():
+    agent_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "agent"))
+    if not os.path.isdir(agent_dir):
+        raise HTTPException(status_code=404, detail="Agent package not found")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for root, dirs, files in os.walk(agent_dir):
+            dirs[:] = [d for d in dirs if d not in ("__pycache__", ".egg-info", "dist", "build", ".git")]
+            for f in files:
+                if f.endswith((".pyc", ".pyo")):
+                    continue
+                full = os.path.join(root, f)
+                arcname = os.path.join("switchboard-agent", os.path.relpath(full, agent_dir))
+                tar.add(full, arcname=arcname)
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/gzip",
+        headers={"Content-Disposition": "attachment; filename=switchboard-agent.tar.gz"},
+    )

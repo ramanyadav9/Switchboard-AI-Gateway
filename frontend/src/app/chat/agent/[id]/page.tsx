@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi } from "@/lib/api";
+import Link from "next/link";
+import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
 
 type Message = { id?: string; role: string; content: string; thinking?: string };
@@ -161,7 +162,6 @@ function InlineMarkdown({ text }: { text: string }) {
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Headings
     const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
     if (headingMatch) {
       flushList();
@@ -180,7 +180,6 @@ function InlineMarkdown({ text }: { text: string }) {
       continue;
     }
 
-    // Unordered list
     if (/^[-*]\s+/.test(trimmed)) {
       if (listType !== "ul") {
         flushList();
@@ -190,7 +189,6 @@ function InlineMarkdown({ text }: { text: string }) {
       continue;
     }
 
-    // Ordered list
     const olMatch = trimmed.match(/^\d+\.\s+(.+)$/);
     if (olMatch) {
       if (listType !== "ol") {
@@ -236,7 +234,6 @@ function SearchIndicator({ phase, results }: { phase: string; results: { title: 
           <span className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Web Search</span>
         </div>
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--bg-muted)", border: "1px solid var(--border)" }}>
-          {/* Steps */}
           <div className="flex items-center gap-6 mb-3">
             {steps.map((step, i) => (
               <div key={step.key} className="flex items-center gap-1.5">
@@ -264,7 +261,6 @@ function SearchIndicator({ phase, results }: { phase: string; results: { title: 
             ))}
           </div>
 
-          {/* Animated status */}
           <div className="flex items-center gap-2">
             <div className="relative w-4 h-4">
               <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: "var(--accent)" }} />
@@ -284,7 +280,6 @@ function SearchIndicator({ phase, results }: { phase: string; results: { title: 
             </span>
           </div>
 
-          {/* Source cards (appear during reading phase) */}
           {results.length > 0 && (
             <div className="mt-3 flex flex-col gap-1">
               {results.map((r, i) => (
@@ -301,6 +296,51 @@ function SearchIndicator({ phase, results }: { phase: string; results: { title: 
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ToolCallBlock({ tool, params, result, error, success, duration }: {
+  tool: string; params: Record<string, string>;
+  result?: unknown; error?: string; success?: boolean; duration?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const icons: Record<string, string> = {
+    read_file: "description", write_file: "edit_document", edit_file: "find_replace",
+    bash: "terminal", grep: "search", glob: "folder_open", ls: "folder",
+  };
+  return (
+    <div className="my-2 rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+      <button onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5"
+        style={{ background: "var(--bg-muted)" }}>
+        <span className="material-symbols-outlined text-[14px]" style={{ color: success === false ? "var(--error)" : "var(--accent)" }}>
+          {icons[tool] || "build"}
+        </span>
+        <span className="font-[family-name:var(--font-mono)] font-medium">{tool}</span>
+        {tool === "bash" && params.command && (
+          <span className="font-[family-name:var(--font-mono)] truncate" style={{ color: "var(--fg-muted)" }}>{String(params.command).slice(0, 60)}</span>
+        )}
+        {tool === "read_file" && params.path && (
+          <span className="font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>{String(params.path)}</span>
+        )}
+        {(tool === "write_file" || tool === "edit_file") && params.path && (
+          <span className="font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>{String(params.path)}</span>
+        )}
+        <span className="ml-auto flex items-center gap-2">
+          {duration && <span className="font-[family-name:var(--font-mono)] text-[10px]" style={{ color: "var(--fg-muted)" }}>{duration}ms</span>}
+          {success === true && <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--success)" }}>check_circle</span>}
+          {success === false && <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--error)" }}>error</span>}
+          <span className={`material-symbols-outlined text-[12px] transition-transform ${open ? "rotate-180" : ""}`} style={{ color: "var(--fg-muted)" }}>expand_more</span>
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 py-2 font-[family-name:var(--font-mono)] text-[12px] max-h-[300px] overflow-auto" style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}>
+          {error ? <div style={{ color: "var(--error)" }}>{error}</div> :
+           result ? <pre className="whitespace-pre-wrap">{typeof result === "string" ? result : JSON.stringify(result, null, 2)}</pre> :
+           <div style={{ color: "var(--fg-muted)" }}>Executing...</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -421,7 +461,23 @@ function ModelSelector({
 
 /* ---- Main page ---- */
 
-export default function ConversationPage() {
+const SLASH_COMMANDS = [
+  { name: "help", icon: "help", description: "Show all commands" },
+  { name: "compact", icon: "compress", description: "Summarize context to free tokens" },
+  { name: "clear", icon: "delete_sweep", description: "Start new conversation" },
+  { name: "model", icon: "smart_toy", description: "Switch AI model" },
+  { name: "agent", icon: "terminal", description: "Select coding agent" },
+  { name: "skills", icon: "psychology", description: "Browse prompt templates" },
+  { name: "search", icon: "search", description: "Toggle web search mode" },
+  { name: "research", icon: "travel_explore", description: "Toggle deep research mode" },
+  { name: "export", icon: "download", description: "Export conversation as markdown" },
+  { name: "cost", icon: "payments", description: "Show token usage" },
+  { name: "undo", icon: "undo", description: "Undo last file change (git)" },
+  { name: "diff", icon: "difference", description: "Show file changes (git)" },
+  { name: "logout", icon: "logout", description: "Disconnect" },
+];
+
+export default function AgentConversationPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -443,9 +499,25 @@ export default function ConversationPage() {
   const [showSkills, setShowSkills] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [skillsList, setSkillsList] = useState<{ id: string; name: string; content: string; category: string }[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<{id: string; name: string; workspace: string; status: string} | null>(null);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [agentsList, setAgentsList] = useState<{id: string; name: string; workspace: string; status: string}[]>([]);
+  const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
+  const [showSlashCommands, setShowSlashCommands] = useState(false);
+  const [slashFilter, setSlashFilter] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const promptApplied = useRef(false);
+
+  function loadAgents() {
+    agentsApi.list().then((list: {id: string; name: string; workspace: string; status: string}[]) => {
+      setAgentsList(Array.isArray(list) ? list : []);
+      if (!selectedAgent) {
+        const online = (Array.isArray(list) ? list : []).filter((a: {status: string}) => a.status === "online");
+        if (online.length > 0) setSelectedAgent(online[0]);
+      }
+    }).catch(() => {});
+  }
 
   useEffect(() => {
     conversations
@@ -476,6 +548,8 @@ export default function ConversationPage() {
         toast("Failed to load conversation", "error");
       })
       .finally(() => setLoading(false));
+
+    loadAgents();
   }, [id, searchParams, toast]);
 
   useEffect(() => {
@@ -502,6 +576,7 @@ export default function ConversationPage() {
       const res = await chatStream({
         conversation_id: id,
         content: userMsg.content,
+        agent_id: selectedAgent?.id,
         ...(selectedModel && selectedModel !== model ? { model: selectedModel } : {}),
       });
 
@@ -551,6 +626,12 @@ export default function ConversationPage() {
               if (thinking) setStreamThinking(thinking);
               if (content) setStreamContent(content);
               else if (rawContent && parsed.thinking) setStreamContent("");
+            } else if (msg.type === "tool_call") {
+              setToolCalls(prev => [...prev, { tool: msg.tool, params: msg.params }]);
+            } else if (msg.type === "tool_result") {
+              setToolCalls(prev => prev.map((tc, i) =>
+                i === prev.length - 1 ? { ...tc, result: msg.result, error: msg.error, success: msg.success, duration: msg.duration_ms } : tc
+              ));
             } else if (msg.type === "done") {
               const parsed = parseThinkTags(rawContent);
               const finalThinking = rawThinking || parsed.thinking;
@@ -565,6 +646,7 @@ export default function ConversationPage() {
               ]);
               setStreamContent("");
               setStreamThinking("");
+              setToolCalls([]);
             } else if (msg.type === "error") {
               toast(`Stream error: ${msg.text}`, "error");
               setMessages([
@@ -573,6 +655,7 @@ export default function ConversationPage() {
               ]);
               setStreamContent("");
               setStreamThinking("");
+              setToolCalls([]);
             }
           } catch {
             /* skip malformed */
@@ -617,7 +700,7 @@ export default function ConversationPage() {
   async function sendResearch() {
     if (!input.trim() || streaming) return;
     const query = input.trim();
-    const userMsg: Message = { role: "user", content: `🔍 **Research:** ${query}` };
+    const userMsg: Message = { role: "user", content: `**Research:** ${query}` };
     const updated = [...messages, userMsg];
     setMessages(updated);
     setInput("");
@@ -775,27 +858,77 @@ export default function ConversationPage() {
     setShowSkills(false);
   }
 
+  function handleSlashCommand(cmd: string) {
+    setShowSlashCommands(false);
+    setInput("");
+    switch (cmd) {
+      case "clear":
+        conversations.create().then((conv: { id: string }) => router.push(`/chat/agent/${conv.id}`)).catch(() => toast("Failed", "error"));
+        break;
+      case "compact":
+        setInput("Please summarize our conversation so far in a few key points.");
+        break;
+      case "model":
+        break;
+      case "agent":
+        loadAgents();
+        setShowAgentPicker(true);
+        break;
+      case "skills":
+        loadSkills();
+        setShowSkills(true);
+        break;
+      case "search":
+        setChatMode(chatMode === "search" ? "chat" : "search");
+        break;
+      case "research":
+        setChatMode(chatMode === "research" ? "chat" : "research");
+        break;
+      case "export": {
+        const md = messages.map(m => `**${m.role}:** ${m.content}`).join("\n\n---\n\n");
+        const blob = new Blob([md], { type: "text/markdown" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "conversation.md"; a.click();
+        URL.revokeObjectURL(url);
+        toast("Exported as markdown", "success");
+        break;
+      }
+      case "help":
+        toast("Type / to see all commands", "info");
+        break;
+      case "cost": {
+        const tokens = messages.reduce((sum, m) => sum + (m.content?.length || 0) / 3, 0);
+        toast(`~${Math.round(tokens)} tokens used in this conversation`, "info");
+        break;
+      }
+      case "undo":
+        if (selectedAgent) {
+          setInput("Run `git checkout -- .` to undo the last file changes.");
+        } else {
+          toast("Select an agent first", "info");
+        }
+        break;
+      case "diff":
+        if (selectedAgent) {
+          setInput("Run `git diff` to show me what files changed.");
+        } else {
+          toast("Select an agent first", "info");
+        }
+        break;
+      case "logout":
+        localStorage.removeItem("token");
+        router.push("/login");
+        break;
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ color: "var(--fg-muted)" }}>
-        <svg
-          className="animate-spin h-5 w-5 mr-2"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            className="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            strokeWidth="4"
-            fill="none"
-          />
-          <path
-            className="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-          />
+        <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
         Loading conversation...
       </div>
@@ -804,40 +937,55 @@ export default function ConversationPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header with model selector */}
+      {/* Header with model selector + Agent Mode */}
       <div
-        className="flex items-center justify-between px-4 py-2 shrink-0"
+        className="flex items-center justify-between px-4 py-2 shrink-0 gap-3"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <ModelSelector
-          value={selectedModel}
-          onChange={setSelectedModel}
-        />
-        {selectedModel && selectedModel !== model && (
-          <span
-            className="text-[11px] font-[family-name:var(--font-mono)] px-2 py-0.5 rounded"
-            style={{
-              color: "var(--accent)",
-              background: "var(--accent-subtle)",
-            }}
+        <div className="flex items-center gap-3">
+          <ModelSelector value={selectedModel} onChange={setSelectedModel} />
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold"
+            style={{ background: "rgba(168,85,247,0.12)", color: "#a855f7" }}
           >
-            Model override active
-          </span>
-        )}
+            <span className="material-symbols-outlined text-[14px]">terminal</span>
+            Agent Mode
+          </div>
+          {selectedModel && selectedModel !== model && (
+            <span
+              className="text-[11px] font-[family-name:var(--font-mono)] px-2 py-0.5 rounded"
+              style={{ color: "var(--accent)", background: "var(--accent-subtle)" }}
+            >
+              Model override active
+            </span>
+          )}
+        </div>
+        <Link
+          href={`/chat/${id}`}
+          className="flex items-center gap-1 text-[12px] transition-colors hover:opacity-80"
+          style={{ color: "var(--fg-muted)" }}
+        >
+          <span className="material-symbols-outlined text-[14px]">arrow_back</span>
+          Chat
+        </Link>
       </div>
 
       {/* Messages */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-auto px-4 py-6"
-      >
+      <div ref={scrollRef} className="flex-1 overflow-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-5">
           {messages.length === 0 && !streaming && (
             <div className="flex flex-col items-center justify-center h-[60vh]" style={{ color: "var(--fg-muted)" }}>
-              <span className="material-symbols-outlined text-[48px] mb-3">
-                forum
-              </span>
-              <p className="text-[14px]">Send a message to start chatting</p>
+              <span className="material-symbols-outlined text-[48px] mb-3">terminal</span>
+              <p className="text-[14px]">Agent mode &mdash; tools and commands available</p>
+              {selectedAgent ? (
+                <p className="text-[12px] mt-1" style={{ color: "var(--fg-muted)" }}>
+                  Connected to <span className="font-semibold" style={{ color: "var(--fg-secondary)" }}>{selectedAgent.name}</span>
+                </p>
+              ) : (
+                <p className="text-[12px] mt-1" style={{ color: "var(--fg-muted)" }}>
+                  No agent selected &mdash; pick one from the toolbar below
+                </p>
+              )}
             </div>
           )}
 
@@ -852,45 +1000,23 @@ export default function ConversationPage() {
                 )}
                 {m.role === "assistant" && (
                   <div className="flex items-center gap-2 mb-1.5">
-                    <div
-                      className="w-5 h-5 rounded flex items-center justify-center shrink-0"
-                      style={{ background: "var(--accent-subtle)" }}
-                    >
-                      <span
-                        className="material-symbols-outlined text-[12px]"
-                        style={{ color: "var(--accent)" }}
-                      >
-                        smart_toy
-                      </span>
+                    <div className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: "var(--accent-subtle)" }}>
+                      <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--accent)" }}>smart_toy</span>
                     </div>
-                    <span className="text-[12px]" style={{ color: "var(--fg-secondary)" }}>
-                      Assistant
-                    </span>
+                    <span className="text-[12px]" style={{ color: "var(--fg-secondary)" }}>Assistant</span>
                     {model && (
-                      <span
-                        className="font-[family-name:var(--font-mono)] text-[10px] rounded px-1.5 py-0.5"
-                        style={{
-                          color: "var(--fg-muted)",
-                          background: "var(--surface)",
-                          border: "1px solid var(--border)",
-                        }}
-                      >
+                      <span className="font-[family-name:var(--font-mono)] text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--fg-muted)", background: "var(--surface)", border: "1px solid var(--border)" }}>
                         {model}
                       </span>
                     )}
                   </div>
                 )}
                 <div
-                  className={`px-4 py-3 rounded-xl text-[14px] leading-[22px] ${
-                    m.role === "user" ? "text-white rounded-br-sm" : ""
-                  }`}
+                  className={`px-4 py-3 rounded-xl text-[14px] leading-[22px] ${m.role === "user" ? "text-white rounded-br-sm" : ""}`}
                   style={
                     m.role === "user"
                       ? { background: "var(--accent)" }
-                      : {
-                          background: "var(--surface)",
-                          border: "1px solid var(--border)",
-                        }
+                      : { background: "var(--surface)", border: "1px solid var(--border)" }
                   }
                 >
                   <MessageContent text={m.content} />
@@ -899,69 +1025,39 @@ export default function ConversationPage() {
             </div>
           ))}
 
-          {/* Streaming */}
+          {/* Streaming tool calls */}
+          {streaming && toolCalls.length > 0 && (
+            <div className="flex justify-start animate-fade-in">
+              <div className="max-w-[85%]">
+                {toolCalls.map((tc, i) => <ToolCallBlock key={i} {...tc} />)}
+              </div>
+            </div>
+          )}
           {streaming && (streamContent || streamThinking) && (
             <div className="flex justify-start animate-fade-in">
               <div className="max-w-[85%]">
                 {streamThinking && (
-                  <ThinkingBlock
-                    content={streamThinking}
-                    isStreaming={!streamContent}
-                  />
+                  <ThinkingBlock content={streamThinking} isStreaming={!streamContent} />
                 )}
                 {streamContent && (
                   <>
                     <div className="flex items-center gap-2 mb-1.5">
-                      <div
-                        className="w-5 h-5 rounded flex items-center justify-center shrink-0"
-                        style={{ background: "var(--accent-subtle)" }}
-                      >
-                        <span
-                          className="material-symbols-outlined text-[12px]"
-                          style={{ color: "var(--accent)" }}
-                        >
-                          smart_toy
-                        </span>
+                      <div className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: "var(--accent-subtle)" }}>
+                        <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--accent)" }}>smart_toy</span>
                       </div>
-                      <span className="text-[12px]" style={{ color: "var(--fg-secondary)" }}>
-                        Assistant
-                      </span>
+                      <span className="text-[12px]" style={{ color: "var(--fg-secondary)" }}>Assistant</span>
                     </div>
-                    <div
-                      className="px-4 py-3 rounded-xl text-[14px] leading-[22px]"
-                      style={{
-                        background: "var(--surface)",
-                        border: "1px solid var(--border)",
-                      }}
-                    >
+                    <div className="px-4 py-3 rounded-xl text-[14px] leading-[22px]" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                       <MessageContent text={streamContent} />
-                      <span
-                        className="inline-block w-1.5 h-4 ml-0.5 animate-pulse rounded-sm"
-                        style={{ background: "var(--accent)" }}
-                      />
+                      <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse rounded-sm" style={{ background: "var(--accent)" }} />
                     </div>
                   </>
                 )}
                 {!streamContent && !streamThinking && (
                   <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--fg-muted)" }}>
-                    <svg
-                      className="animate-spin h-4 w-4"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                        fill="none"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      />
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
                     Generating...
                   </div>
@@ -1026,6 +1122,22 @@ export default function ConversationPage() {
             </div>
           )}
 
+          {/* Slash command palette */}
+          {showSlashCommands && (
+            <div className="mb-2 rounded-lg border overflow-hidden max-h-[300px] overflow-y-auto" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+              {SLASH_COMMANDS.filter(c => c.name.includes(slashFilter)).map(cmd => (
+                <button key={cmd.name} onClick={() => handleSlashCommand(cmd.name)}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-white/5">
+                  <span className="material-symbols-outlined text-[16px]" style={{ color: "var(--accent)" }}>{cmd.icon}</span>
+                  <div>
+                    <div className="text-[13px] font-medium font-[family-name:var(--font-mono)]" style={{ color: "var(--fg)" }}>/{cmd.name}</div>
+                    <div className="text-[11px]" style={{ color: "var(--fg-muted)" }}>{cmd.description}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Input box */}
           <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
             <div className="flex items-end gap-2 px-3 py-2">
@@ -1034,6 +1146,12 @@ export default function ConversationPage() {
                 onChange={(e) => {
                   const val = e.target.value;
                   setInput(val);
+                  if (val.startsWith("/")) {
+                    setShowSlashCommands(true);
+                    setSlashFilter(val.slice(1).toLowerCase());
+                  } else {
+                    setShowSlashCommands(false);
+                  }
                   if (val.endsWith("/")) { loadSkills(); setShowSkills(true); }
                   else if (showSkills && !val.includes("/")) setShowSkills(false);
                 }}
@@ -1042,12 +1160,12 @@ export default function ConversationPage() {
                     e.preventDefault();
                     chatMode === "research" ? sendResearch() : chatMode === "search" ? sendWithSearch() : send();
                   }
-                  if (e.key === "Escape") { setShowSkills(false); setShowTools(false); }
+                  if (e.key === "Escape") { setShowSkills(false); setShowTools(false); setShowSlashCommands(false); setShowAgentPicker(false); }
                 }}
                 rows={1}
                 className="flex-1 bg-transparent py-1.5 text-[14px] focus:outline-none resize-none max-h-[150px]"
                 style={{ color: "var(--fg)" }}
-                placeholder={chatMode === "research" ? "What would you like to research?" : chatMode === "search" ? "Search the web..." : "Message Switchboard..."}
+                placeholder={chatMode === "research" ? "What would you like to research?" : chatMode === "search" ? "Search the web..." : selectedAgent ? `Message ${selectedAgent.name}...` : "Select an agent below..."}
                 disabled={streaming}
                 onInput={(e) => {
                   const el = e.target as HTMLTextAreaElement;
@@ -1084,7 +1202,7 @@ export default function ConversationPage() {
                 <span className="material-symbols-outlined text-[18px]" style={{ transform: showTools ? "rotate(45deg)" : "none", transition: "transform 0.2s" }}>add</span>
               </button>
 
-              {/* Tool buttons — always visible */}
+              {/* Skills */}
               <button
                 onClick={() => { if (!showSkills) loadSkills(); setShowSkills(!showSkills); setShowTools(false); }}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
@@ -1095,6 +1213,7 @@ export default function ConversationPage() {
                 <span className="hidden sm:inline">Skills</span>
               </button>
 
+              {/* Search */}
               <button
                 onClick={() => setChatMode(chatMode === "search" ? "chat" : "search")}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
@@ -1105,6 +1224,7 @@ export default function ConversationPage() {
                 <span className="hidden sm:inline">Search</span>
               </button>
 
+              {/* Research */}
               <button
                 onClick={() => setChatMode(chatMode === "research" ? "chat" : "research")}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
@@ -1115,21 +1235,42 @@ export default function ConversationPage() {
                 <span className="hidden sm:inline">Research</span>
               </button>
 
-              {/* Agent mode button */}
-              <button
-                onClick={() => router.push(`/chat/agent/${id}`)}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
-                style={{ color: "var(--fg-muted)" }}
-                title="Open in Agent Mode"
-              >
-                <span className="material-symbols-outlined text-[14px]">terminal</span>
-                <span className="hidden sm:inline">Agent</span>
-              </button>
+              {/* Agent selector */}
+              <div className="relative">
+                <button
+                  onClick={() => { loadAgents(); setShowAgentPicker(!showAgentPicker); }}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                  style={selectedAgent ? { color: "#a855f7", background: "rgba(168,85,247,0.12)" } : { color: "var(--fg-muted)" }}
+                >
+                  <span className="material-symbols-outlined text-[14px]">terminal</span>
+                  <span className="hidden sm:inline">{selectedAgent ? selectedAgent.name : "Agent"}</span>
+                </button>
+                {showAgentPicker && (
+                  <div className="absolute bottom-full left-0 mb-1 rounded-lg border overflow-hidden min-w-[220px] z-50" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+                    <button onClick={() => { setSelectedAgent(null); setShowAgentPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5" style={{ color: "var(--fg-secondary)" }}>
+                      <span className="material-symbols-outlined text-[14px]">close</span> No agent
+                    </button>
+                    {agentsList.filter(a => a.status === "online").length === 0 && (
+                      <div className="px-3 py-2 text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                        No agents online
+                      </div>
+                    )}
+                    {agentsList.filter(a => a.status === "online").map(agent => (
+                      <button key={agent.id} onClick={() => { setSelectedAgent(agent); setShowAgentPicker(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5"
+                        style={{ color: selectedAgent?.id === agent.id ? "#a855f7" : "var(--fg-secondary)" }}>
+                        <span className="w-2 h-2 rounded-full" style={{ background: "var(--success)" }} />
+                        {agent.name} <span style={{ color: "var(--fg-muted)" }}>&middot; {agent.workspace}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="flex-1" />
               <span className="text-[10px] font-[family-name:var(--font-mono)] hidden sm:block" style={{ color: "var(--fg-muted)" }}>
-                {chatMode !== "chat" && <span style={{ color: "var(--accent)" }}>{chatMode === "search" ? "🔍 Search" : "🌐 Research"} · </span>}
-                ⇧↵ newline
+                {chatMode !== "chat" && <span style={{ color: "var(--accent)" }}>{chatMode === "search" ? "Search" : "Research"} · </span>}
+                / commands · Shift+Enter newline
               </span>
             </div>
           </div>

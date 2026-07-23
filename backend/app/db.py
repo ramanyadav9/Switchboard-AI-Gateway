@@ -26,7 +26,7 @@ def init_db() -> None:
     import app.models  # noqa: F401  (ensures models are registered on Base)
 
     if not settings.DATABASE_URL.startswith("sqlite"):
-        from sqlalchemy import text
+        from sqlalchemy import text, inspect
         with engine.connect() as conn:
             try:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -34,4 +34,25 @@ def init_db() -> None:
             except Exception:
                 conn.rollback()
 
+        inspector = inspect(engine)
+        _sync_table_schemas(inspector)
+
     Base.metadata.create_all(bind=engine)
+
+
+def _sync_table_schemas(inspector) -> None:
+    """Drop and recreate tables whose columns don't match the model."""
+    from sqlalchemy import text
+    for table in Base.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue
+        model_cols = {c.name for c in table.columns}
+        db_cols = {c["name"] for c in inspector.get_columns(table.name)}
+        missing = model_cols - db_cols
+        if missing:
+            with engine.begin() as conn:
+                conn.execute(text(f"DROP TABLE IF EXISTS {table.name} CASCADE"))
+            import logging
+            logging.getLogger("switchboard").info(
+                f"Recreating table '{table.name}' (missing columns: {missing})"
+            )

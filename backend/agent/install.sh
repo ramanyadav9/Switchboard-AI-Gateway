@@ -95,27 +95,44 @@ PY_VERSION=""
 PYTHON_FALLBACK=""
 PY_FALLBACK_VER=""
 
-# Two passes: first find Python with pip, then any Python 3.10+
-for cmd in python3 python py; do
-    if command -v "$cmd" &>/dev/null; then
-        ver=$("$cmd" -c "import sys; v=sys.version_info; print(f'{v.major}.{v.minor}')" 2>/dev/null || continue)
-        major=$(echo "$ver" | cut -d. -f1)
-        minor=$(echo "$ver" | cut -d. -f2)
-        if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
-            # Prefer one that already has pip
-            if "$cmd" -m pip --version &>/dev/null; then
-                PYTHON="$cmd"
-                PY_VERSION="$ver"
-                break
-            elif [ -z "$PYTHON_FALLBACK" ]; then
-                PYTHON_FALLBACK="$cmd"
-                PY_FALLBACK_VER="$ver"
-            fi
-        fi
+# On Windows (Git Bash / MSYS), the MSYS python3 often has no pip.
+# Try Windows-native Python first (py launcher, python.exe), then MSYS python3.
+IS_WINDOWS=false
+case "$OS" in
+    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=true ;;
+esac
+
+if [ "$IS_WINDOWS" = true ]; then
+    PYTHON_CANDIDATES=("py" "python" "python3" "python.exe" "py.exe")
+else
+    PYTHON_CANDIDATES=("python3" "python" "py")
+fi
+
+check_python() {
+    local cmd="$1"
+    local ver major minor
+    command -v "$cmd" &>/dev/null || return 1
+    ver=$("$cmd" -c "import sys; v=sys.version_info; print(f'{v.major}.{v.minor}')" 2>/dev/null) || return 1
+    major=$(echo "$ver" | cut -d. -f1)
+    minor=$(echo "$ver" | cut -d. -f2)
+    [ "$major" -ge 3 ] && [ "$minor" -ge 10 ] || return 1
+    echo "$ver"
+    return 0
+}
+
+for cmd in "${PYTHON_CANDIDATES[@]}"; do
+    ver=$(check_python "$cmd" 2>/dev/null) || continue
+    if "$cmd" -m pip --version &>/dev/null; then
+        PYTHON="$cmd"
+        PY_VERSION="$ver"
+        break
+    elif [ -z "$PYTHON_FALLBACK" ]; then
+        PYTHON_FALLBACK="$cmd"
+        PY_FALLBACK_VER="$ver"
     fi
 done
 
-# Use fallback if no Python with pip was found
+# Use fallback (Python without pip) only if nothing better found
 if [ -z "$PYTHON" ] && [ -n "$PYTHON_FALLBACK" ]; then
     PYTHON="$PYTHON_FALLBACK"
     PY_VERSION="$PY_FALLBACK_VER"

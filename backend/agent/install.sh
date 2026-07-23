@@ -53,6 +53,17 @@ warn()    { echo -e "  ${YELLOW}!${NC} $1"; }
 fail()    { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 step()    { echo -e "  ${CYAN}→${NC} ${BOLD}$1${NC}"; }
 
+# Interactive read that works in curl|bash (reads from /dev/tty)
+prompt() {
+    local var_name="$1" prompt_text="$2" result=""
+    if [ -t 0 ]; then
+        read -p "$prompt_text" result
+    elif [ -e /dev/tty ]; then
+        read -p "$prompt_text" result < /dev/tty
+    fi
+    eval "$var_name=\"\$result\""
+}
+
 # ─── Banner ──────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${CYAN}"
@@ -131,18 +142,15 @@ fi
 step "Configuration"
 
 if [ -z "$SERVER_URL" ]; then
-    echo ""
-    echo -e "  ${DIM}Enter your Switchboard server URL${NC}"
-    echo -e "  ${DIM}Example: http://your-server:41237${NC}"
-    echo ""
-    read -p "  Server URL: " SERVER_URL < /dev/tty
+    prompt SERVER_URL "  Server URL: "
     echo ""
 fi
 
 SERVER_URL="${SERVER_URL%/}"
 
 if [ -z "$SERVER_URL" ]; then
-    fail "Server URL is required"
+    echo ""
+    fail "Server URL is required. Use:\n    curl -fsSL <server>/api/install | SWITCHBOARD_SERVER=<server> SWITCHBOARD_KEY=<key> bash"
 fi
 
 info "Checking server..."
@@ -284,19 +292,25 @@ if [ -z "$API_KEY" ]; then
     echo ""
     echo -e "  ${DIM}Enter your API key (from Dashboard > API Keys)${NC}"
     echo ""
-    read -p "  API key: " API_KEY < /dev/tty
+    prompt API_KEY "  API key: "
     echo ""
 fi
 
 if [ -z "$API_KEY" ]; then
-    fail "API key is required"
+    echo ""
+    info "Installation complete but not connected."
+    info "Connect manually:"
+    echo ""
+    echo -e "  ${BOLD}switchboard-agent connect $SERVER_URL --key YOUR_API_KEY${NC}"
+    echo ""
+    exit 0
 fi
 
 CONNECT_ARGS=("$SERVER_URL" --key "$API_KEY")
 if [ -n "$AGENT_NAME" ]; then
     CONNECT_ARGS+=(--name "$AGENT_NAME")
 else
-    read -p "  Agent name (Enter for auto): " AGENT_NAME < /dev/tty
+    prompt AGENT_NAME "  Agent name (Enter for auto): "
     if [ -n "$AGENT_NAME" ]; then
         CONNECT_ARGS+=(--name "$AGENT_NAME")
     fi

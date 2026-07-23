@@ -33,12 +33,12 @@ services:
       - ACCESS_TOKEN_EXPIRE_MINUTES=1440
       - DATABASE_URL=postgresql://switchboard:${POSTGRES_PASSWORD:-switchboard-db-secret}@postgres:5432/switchboard
       - REDIS_URL=redis://redis:6379
-      - VLLM_LLM_BASE_URL=http://host.docker.internal:8000
-      - VLLM_STT_BASE_URL=http://host.docker.internal:8004
-      - VLLM_TTS_BASE_URL=http://host.docker.internal:8002
-      - SENSEVOICE_BASE_URL=http://host.docker.internal:8006
+      - VLLM_LLM_BASE_URL=http://${GPU_SERVER_HOST:-host.docker.internal}:${VLLM_LLM_PORT:-8000}
+      - VLLM_STT_BASE_URL=http://${GPU_SERVER_HOST:-host.docker.internal}:${VLLM_STT_PORT:-8004}
+      - VLLM_TTS_BASE_URL=http://${GPU_SERVER_HOST:-host.docker.internal}:${VLLM_TTS_PORT:-8002}
+      - SENSEVOICE_BASE_URL=http://${GPU_SERVER_HOST:-host.docker.internal}:${SENSEVOICE_PORT:-8006}
       - VLLM_API_KEY=${VLLM_API_KEY:-vaani-local-key}
-      - DEFAULT_MODEL=Qwen3-14B
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-Qwen3-14B}
       - SEARXNG_URL=http://searxng:8080
       - CORS_ORIGINS=["*"]
     depends_on:

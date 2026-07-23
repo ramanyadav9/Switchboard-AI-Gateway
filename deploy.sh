@@ -70,22 +70,39 @@ else
     log ".env exists — using existing config"
 fi
 
-# ─── Verify GPU services ────────────────────────────────────
+# ─── GPU Server setup ───────────────────────────────────────
 
-info "Checking GPU services..."
+GPU_HOST=$(grep GPU_SERVER_HOST .env 2>/dev/null | cut -d= -f2)
+GPU_HOST=${GPU_HOST:-localhost}
+
+if [[ "$GPU_HOST" == "" || "$GPU_HOST" == "localhost" ]]; then
+    GPU_HOST="localhost"
+    info "GPU services expected on THIS machine (set GPU_SERVER_HOST in .env for remote)"
+else
+    info "GPU services on remote server: $GPU_HOST"
+fi
+
+LLM_PORT=$(grep VLLM_LLM_PORT .env 2>/dev/null | cut -d= -f2)
+STT_PORT=$(grep VLLM_STT_PORT .env 2>/dev/null | cut -d= -f2)
+SV_PORT=$(grep SENSEVOICE_PORT .env 2>/dev/null | cut -d= -f2)
+LLM_PORT=${LLM_PORT:-8000}
+STT_PORT=${STT_PORT:-8004}
+SV_PORT=${SV_PORT:-8006}
+
+info "Checking GPU services on ${GPU_HOST}..."
 
 check_service() {
     local name=$1 url=$2
-    if curl -s --max-time 3 "$url" >/dev/null 2>&1; then
+    if curl -s --max-time 5 "$url" >/dev/null 2>&1; then
         log "$name is running"
     else
         warn "$name not reachable at $url — chat/STT may not work"
     fi
 }
 
-check_service "vLLM (LLM)"     "http://localhost:8000/v1/models"
-check_service "Whisper (STT)"   "http://localhost:8004/v1/models"
-check_service "SenseVoice"      "http://localhost:8006"
+check_service "vLLM (LLM)"     "http://${GPU_HOST}:${LLM_PORT}/v1/models"
+check_service "Whisper (STT)"   "http://${GPU_HOST}:${STT_PORT}/v1/models"
+check_service "SenseVoice"      "http://${GPU_HOST}:${SV_PORT}"
 
 # ─── Build and start ────────────────────────────────────────
 

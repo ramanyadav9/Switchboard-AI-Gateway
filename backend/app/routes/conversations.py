@@ -121,7 +121,11 @@ def get_conversation(
         message_count=msg_count,
         created_at=conv.created_at, updated_at=conv.updated_at,
         messages=[
-            {"id": m.id, "role": m.role, "content": m.content, "thinking": m.thinking, "token_count": m.token_count, "created_at": m.created_at.isoformat()}
+            {"id": m.id, "role": m.role, "content": m.content, "thinking": m.thinking,
+             "token_count": m.token_count, "created_at": m.created_at.isoformat(),
+             "message_type": getattr(m, "message_type", "text"),
+             "tool_calls_json": getattr(m, "tool_calls_json", None),
+             "tool_call_id": getattr(m, "tool_call_id", None)}
             for m in messages
         ],
     )

@@ -55,6 +55,11 @@ class Conversation(Base):
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_up_to: Mapped[int] = mapped_column(Integer, default=0)
+    mode: Mapped[str] = mapped_column(String, default="chat")
+    agent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    workspace: Mapped[str | None] = mapped_column(String, nullable=True)
+    snapshot_base: Mapped[str | None] = mapped_column(String, nullable=True)
+    compacted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -68,6 +73,10 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_count: Mapped[int] = mapped_column(Integer, default=0)
+    message_type: Mapped[str] = mapped_column(String, default="text")
+    tool_calls_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    tool_call_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_compacted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     __table_args__ = (
@@ -167,6 +176,35 @@ class AgentConnection(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class ToolExecution(Base):
+    __tablename__ = "tool_executions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String, ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String, nullable=False)
+    params_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    turn_number: Mapped[int] = mapped_column(Integer, default=0)
+    snapshot_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class ConversationSnapshot(Base):
+    __tablename__ = "conversation_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String, ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False)
+    turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    commit_hash: Mapped[str] = mapped_column(String, nullable=False)
+    files_changed: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    diff_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 

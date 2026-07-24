@@ -282,6 +282,86 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'latency_ms': latency_ms}})}\n\n"
 
 
+def _save_tool_execution(conversation_id: str, agent_id: str, tool_name: str, params: dict, result: dict, turn: int):
+    db = SessionLocal()
+    try:
+        from app.models import ToolExecution
+        te = ToolExecution(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            tool_name=tool_name,
+            params_json=params,
+            result_json=result.get("result") if result.get("success") else None,
+            success=result.get("success", False),
+            error=result.get("error"),
+            duration_ms=result.get("duration_ms", 0),
+            turn_number=turn,
+        )
+        db.add(te)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _save_tool_message(conversation_id: str, role: str, content: str, message_type: str,
+                       tool_calls_json: list | None = None, tool_call_id: str | None = None):
+    db = SessionLocal()
+    try:
+        msg = ChatMessage(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            message_type=message_type,
+            tool_calls_json=tool_calls_json,
+            tool_call_id=tool_call_id,
+            token_count=estimate_tokens(content),
+        )
+        db.add(msg)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+DOOM_LOOP_THRESHOLD = 3
+
+
+def _detect_doom_loop(history: list[tuple[str, str]]) -> bool:
+    if len(history) < DOOM_LOOP_THRESHOLD:
+        return False
+    last = history[-DOOM_LOOP_THRESHOLD:]
+    return all(t == last[0] for t in last)
+
+
+async def _llm_stream_with_retry(http_client, url, headers, body, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            response = await http_client.send(
+                http_client.build_request("POST", url, headers=headers, json=body),
+                stream=True,
+            )
+            if response.status_code == 429:
+                retry_after = float(response.headers.get("retry-after", 2 * (2 ** attempt)))
+                await response.aclose()
+                await asyncio.sleep(min(retry_after, 30))
+                continue
+            if response.status_code >= 500:
+                await response.aclose()
+                await asyncio.sleep(2 * (2 ** attempt))
+                continue
+            return response
+        except httpx.RequestError:
+            if attempt == max_retries - 1:
+                raise
+            await asyncio.sleep(2 * (2 ** attempt))
+    return None
+
+
 async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None):
     from app.routes.ws_agent import execute_tool
     from app.services.agent_tools import TOOL_DEFINITIONS
@@ -294,80 +374,91 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
     total_completion = 0
     start_time = time.time()
     max_turns = 10
+    tool_call_history: list[tuple[str, str]] = []
+
+    # Save user message
+    loop = asyncio.get_event_loop()
+    user_tokens = estimate_tokens(user_content)
+    loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
+    loop.run_in_executor(None, _auto_title, conversation_id, user_content)
 
     try:
         for turn in range(max_turns):
             raw_content = ""
             raw_thinking = ""
             tool_calls_accum: dict[int, dict] = {}
-            finish_reason = ""
 
             try:
-                async with http_client.stream(
-                    "POST", f"{base}/v1/chat/completions",
-                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-                    json={
-                        "model": model, "messages": messages, "stream": True,
-                        "temperature": temperature, "max_tokens": max_tokens,
-                        "tools": TOOL_DEFINITIONS,
-                    },
-                ) as response:
-                    if response.status_code >= 400:
-                        error_body = await response.aread()
-                        yield f"data: {json.dumps({'type': 'error', 'text': error_body.decode(errors='replace')})}\n\n"
-                        return
+                response = await _llm_stream_with_retry(
+                    http_client,
+                    f"{base}/v1/chat/completions",
+                    {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+                    {"model": model, "messages": messages, "stream": True,
+                     "temperature": temperature, "max_tokens": max_tokens,
+                     "tools": TOOL_DEFINITIONS},
+                )
+                if not response:
+                    yield f"data: {json.dumps({'type': 'error', 'text': 'LLM request failed after retries'})}\n\n"
+                    return
 
-                    buffer = ""
-                    async for chunk in response.aiter_text():
-                        buffer += chunk
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            line = line.strip()
-                            if not line.startswith("data: "):
-                                continue
-                            data = line[6:]
-                            if data == "[DONE]":
-                                break
-                            try:
-                                parsed = json.loads(data)
-                                choice = parsed.get("choices", [{}])[0]
-                                delta = choice.get("delta", {})
-                                finish_reason = choice.get("finish_reason", "") or finish_reason
-                                usage = parsed.get("usage")
-                                if usage:
-                                    total_prompt = usage.get("prompt_tokens", 0)
-                                    total_completion += usage.get("completion_tokens", 0)
+                if response.status_code >= 400:
+                    error_body = await response.aread()
+                    yield f"data: {json.dumps({'type': 'error', 'text': error_body.decode(errors='replace')})}\n\n"
+                    return
 
-                                c = delta.get("content", "")
-                                r = delta.get("reasoning_content", "")
-                                if c or r:
-                                    evt: dict = {"type": "token"}
-                                    if c:
-                                        raw_content += c
-                                        evt["content"] = c
-                                    if r:
-                                        raw_thinking += r
-                                        evt["reasoning"] = r
-                                    yield f"data: {json.dumps(evt)}\n\n"
+                buffer = ""
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            parsed = json.loads(data)
+                            choice = parsed.get("choices", [{}])[0]
+                            delta = choice.get("delta", {})
+                            usage = parsed.get("usage")
+                            if usage:
+                                total_prompt = usage.get("prompt_tokens", 0)
+                                total_completion += usage.get("completion_tokens", 0)
 
-                                for tc_delta in delta.get("tool_calls", []):
-                                    idx = tc_delta.get("index", 0)
-                                    if idx not in tool_calls_accum:
-                                        tool_calls_accum[idx] = {"id": "", "name": "", "arguments": ""}
-                                    if tc_delta.get("id"):
-                                        tool_calls_accum[idx]["id"] = tc_delta["id"]
-                                    fn = tc_delta.get("function", {})
-                                    if fn.get("name"):
-                                        tool_calls_accum[idx]["name"] = fn["name"]
-                                    if fn.get("arguments"):
-                                        tool_calls_accum[idx]["arguments"] += fn["arguments"]
-                            except json.JSONDecodeError:
-                                pass
+                            c = delta.get("content", "")
+                            r = delta.get("reasoning_content", "")
+                            if c or r:
+                                evt: dict = {"type": "token"}
+                                if c:
+                                    raw_content += c
+                                    evt["content"] = c
+                                if r:
+                                    raw_thinking += r
+                                    evt["reasoning"] = r
+                                yield f"data: {json.dumps(evt)}\n\n"
+
+                            for tc_delta in delta.get("tool_calls", []):
+                                idx = tc_delta.get("index", 0)
+                                if idx not in tool_calls_accum:
+                                    tool_calls_accum[idx] = {"id": "", "name": "", "arguments": ""}
+                                if tc_delta.get("id"):
+                                    tool_calls_accum[idx]["id"] = tc_delta["id"]
+                                fn = tc_delta.get("function", {})
+                                if fn.get("name"):
+                                    tool_calls_accum[idx]["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    tool_calls_accum[idx]["arguments"] += fn["arguments"]
+                        except json.JSONDecodeError:
+                            pass
+
+                await response.aclose()
 
             except httpx.RequestError as e:
                 yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
                 return
 
+            # No tool calls — final text response
             if not tool_calls_accum:
                 think_match = re.match(r"^<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
                 if think_match:
@@ -375,47 +466,67 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
                     raw_content = think_match.group(2).strip()
                 break
 
-            assistant_msg: dict = {"role": "assistant", "content": raw_content or None, "tool_calls": []}
+            # Build assistant message with tool_calls
+            tc_list = []
             for idx in sorted(tool_calls_accum.keys()):
                 tc = tool_calls_accum[idx]
-                assistant_msg["tool_calls"].append({
-                    "id": tc["id"], "type": "function",
-                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                })
+                tc_list.append({"id": tc["id"], "type": "function",
+                                "function": {"name": tc["name"], "arguments": tc["arguments"]}})
+
+            assistant_msg: dict = {"role": "assistant", "content": raw_content or None, "tool_calls": tc_list}
             messages.append(assistant_msg)
 
-            for idx in sorted(tool_calls_accum.keys()):
-                tc = tool_calls_accum[idx]
+            # Persist assistant tool_call message
+            loop.run_in_executor(None, _save_tool_message, conversation_id, "assistant",
+                                raw_content or "", "tool_call",
+                                [{"id": tc["id"], "name": tc["function"]["name"],
+                                  "arguments": tc["function"]["arguments"]} for tc in tc_list])
+
+            # Execute each tool call
+            for tc_entry in tc_list:
+                tc_name = tc_entry["function"]["name"]
                 try:
-                    params = json.loads(tc["arguments"])
+                    params = json.loads(tc_entry["function"]["arguments"])
                 except json.JSONDecodeError:
                     params = {}
-                yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc['name'], 'params': params})}\n\n"
+
+                # Doom loop detection
+                params_key = json.dumps(params, sort_keys=True)
+                tool_call_history.append((tc_name, params_key))
+                if _detect_doom_loop(tool_call_history):
+                    doom_msg = f"Stopped: tool '{tc_name}' called {DOOM_LOOP_THRESHOLD} times with identical params. Try a different approach."
+                    yield f"data: {json.dumps({'type': 'tool_result', 'tool': tc_name, 'success': False, 'error': doom_msg})}\n\n"
+                    messages.append({"role": "tool", "tool_call_id": tc_entry["id"],
+                                     "content": json.dumps({"error": doom_msg})})
+                    continue
+
+                yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc_name, 'params': params})}\n\n"
 
                 try:
-                    result = await execute_tool(agent_id, tc["name"], params)
+                    result = await execute_tool(agent_id, tc_name, params)
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
 
-                yield f"data: {json.dumps({'type': 'tool_result', 'tool': tc['name'], 'success': result.get('success', False), 'result': result.get('result'), 'error': result.get('error'), 'duration_ms': result.get('duration_ms')})}\n\n"
+                yield f"data: {json.dumps({'type': 'tool_result', 'tool': tc_name, 'success': result.get('success', False), 'result': result.get('result'), 'error': result.get('error'), 'duration_ms': result.get('duration_ms')})}\n\n"
 
-                messages.append({
-                    "role": "tool", "tool_call_id": tc["id"],
-                    "content": json.dumps(result.get("result", {}) if result.get("success") else {"error": result.get("error", "Unknown error")}),
-                })
+                tool_content = result.get("result", {}) if result.get("success") else {"error": result.get("error", "Unknown error")}
+                messages.append({"role": "tool", "tool_call_id": tc_entry["id"],
+                                 "content": json.dumps(tool_content)})
+
+                # Persist tool result message + execution record
+                loop.run_in_executor(None, _save_tool_message, conversation_id, "tool",
+                                     json.dumps(tool_content), "tool_result", None, tc_entry["id"])
+                loop.run_in_executor(None, _save_tool_execution, conversation_id,
+                                     agent_id or "", tc_name, params, result, turn)
 
     finally:
         decr_active_generations(user_id)
 
     latency_ms = int((time.time() - start_time) * 1000)
-
-    user_tokens = estimate_tokens(user_content)
     assistant_tokens = total_completion or estimate_tokens(raw_content)
 
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
+    # Save final assistant text
     loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
-    loop.run_in_executor(None, _auto_title, conversation_id, user_content)
     loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': total_prompt, 'completion_tokens': total_completion, 'latency_ms': latency_ms}})}\n\n"

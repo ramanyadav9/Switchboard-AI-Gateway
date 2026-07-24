@@ -2,16 +2,22 @@ import json
 from contextlib import contextmanager
 
 import redis
+import redis.asyncio as aioredis
 
 from app.config import get_settings
 
 settings = get_settings()
 
 pool = redis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True)
+_async_pool = aioredis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 def get_redis() -> redis.Redis:
     return redis.Redis(connection_pool=pool)
+
+
+def get_async_redis() -> aioredis.Redis:
+    return aioredis.Redis(connection_pool=_async_pool)
 
 
 SESSION_TTL = 30 * 60  # 30 minutes

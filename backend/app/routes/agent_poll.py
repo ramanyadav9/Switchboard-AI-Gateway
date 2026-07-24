@@ -1,45 +1,49 @@
-"""HTTP long-poll agent transport — replaces WebSocket.
+"""HTTP long-poll agent transport — Redis-backed, multi-worker safe.
 
-Agent polls GET /api/agent/poll (long-poll, up to 30s).
-Server queues tool_calls in-memory. Agent picks them up on next poll.
+Agent polls GET /api/agent/poll (long-poll, up to 25s via Redis BRPOP).
+Tool calls are queued in Redis (shared across all uvicorn workers, survives restart).
 Agent posts results to POST /api/agent/result.
 
-No persistent connection. Each request is independent.
-Connection status: last_poll < 15s ago = online.
+Queue keys:
+  agent:queue:{agent_id}      — list of pending tool calls (LPUSH / BRPOP)
+  agent:resultq:{request_id}  — single-item list holding a tool result (LPUSH / BRPOP)
+
+No persistent connection. Each request is independent. Works with any worker count.
+Connection status: last_seen < AGENT_ONLINE_THRESHOLD ago = online.
 """
 import asyncio
 import json
 import logging
-import platform
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
 import bcrypt
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
+from app.cache import get_async_redis
 from app.config import get_settings
-from app.db import SessionLocal, get_db
+from app.db import SessionLocal
 from app.models import AgentConnection, ApiKey, User
 
 router = APIRouter()
 settings = get_settings()
 log = logging.getLogger("switchboard.agent")
 
-LONG_POLL_TIMEOUT = 25  # seconds — how long a poll blocks waiting for work
+LONG_POLL_TIMEOUT = 25  # seconds — how long a poll blocks waiting for work (Redis BRPOP)
 # Must be > LONG_POLL_TIMEOUT, else an agent mid-long-poll looks "offline"
 AGENT_ONLINE_THRESHOLD = 40  # seconds — agent is "online" if polled within this
+QUEUE_TTL = 300  # seconds — pending tool-call queue expiry
+RESULT_TTL = 130  # seconds — result list expiry
 
-# In-memory tool call queue and pending futures
-# {agent_id: [{"request_id": str, "tool": str, "params": dict}]}
-_tool_queues: dict[str, list[dict]] = {}
-# {request_id: asyncio.Future}
-_pending_futures: dict[str, asyncio.Future] = {}
-# {agent_id: asyncio.Event} — signaled when a new tool call is queued
-_poll_events: dict[str, asyncio.Event] = {}
+
+def _queue_key(agent_id: str) -> str:
+    return f"agent:queue:{agent_id}"
+
+
+def _result_key(request_id: str) -> str:
+    return f"agent:resultq:{request_id}"
 
 
 # ---------- Auth ----------
@@ -217,33 +221,22 @@ async def poll_for_work(
     finally:
         db.close()
 
-    # Check for queued tool calls
-    queue = _tool_queues.get(agent_id, [])
-    if queue:
-        calls = list(queue)
-        queue.clear()
-        return {"status": "online", "tool_calls": calls}
+    # Blocking pop from Redis queue (this IS the long-poll — works across all workers)
+    ar = get_async_redis()
+    qkey = _queue_key(agent_id)
+    popped = await ar.brpop([qkey], timeout=LONG_POLL_TIMEOUT)
+    if not popped:
+        return {"status": "online", "tool_calls": []}
 
-    # Long-poll: wait up to LONG_POLL_TIMEOUT for a tool call
-    event = _poll_events.get(agent_id)
-    if not event:
-        event = asyncio.Event()
-        _poll_events[agent_id] = event
-    event.clear()
+    calls = [json.loads(popped[1])]
+    # Drain any other immediately-available calls (non-blocking)
+    while True:
+        more = await ar.rpop(qkey)
+        if not more:
+            break
+        calls.append(json.loads(more))
 
-    try:
-        await asyncio.wait_for(event.wait(), timeout=LONG_POLL_TIMEOUT)
-    except asyncio.TimeoutError:
-        pass
-
-    # Check again after wait
-    queue = _tool_queues.get(agent_id, [])
-    if queue:
-        calls = list(queue)
-        queue.clear()
-        return {"status": "online", "tool_calls": calls}
-
-    return {"status": "online", "tool_calls": []}
+    return {"status": "online", "tool_calls": calls}
 
 
 @router.post("/agent/result")
@@ -268,51 +261,48 @@ async def submit_result(
     finally:
         db.close()
 
-    # Resolve the pending future
-    future = _pending_futures.pop(body.request_id, None)
-    if future and not future.done():
-        future.set_result({
-            "success": body.success,
-            "result": body.result,
-            "error": body.error,
-            "duration_ms": body.duration_ms,
-        })
-        return {"status": "accepted"}
-
-    return {"status": "no_pending_request"}
+    # Push result to Redis so the waiting agentic loop (any worker) picks it up
+    ar = get_async_redis()
+    rkey = _result_key(body.request_id)
+    await ar.lpush(rkey, json.dumps({
+        "success": body.success,
+        "result": body.result,
+        "error": body.error,
+        "duration_ms": body.duration_ms,
+    }))
+    await ar.expire(rkey, RESULT_TTL)
+    return {"status": "accepted"}
 
 
 # ---------- Functions used by the agentic loop (chat.py) ----------
 
 async def execute_tool(agent_id: str, tool: str, params: dict, timeout: float = 120.0) -> dict:
-    """Queue a tool call for the agent and wait for the result."""
+    """Queue a tool call in Redis and block (BRPOP) until the agent returns a result.
+
+    Multi-worker safe: the agent's poll may hit a different uvicorn worker than the
+    one running this loop — Redis is the shared channel between them.
+    """
     if not is_agent_online(agent_id):
         raise ValueError("Agent not connected")
 
     request_id = str(uuid.uuid4())
-    future = asyncio.get_event_loop().create_future()
-    _pending_futures[request_id] = future
+    ar = get_async_redis()
+    qkey = _queue_key(agent_id)
+    rkey = _result_key(request_id)
 
-    # Queue the tool call
-    if agent_id not in _tool_queues:
-        _tool_queues[agent_id] = []
-    _tool_queues[agent_id].append({
+    # Enqueue the tool call (LPUSH → head; agent BRPOPs from tail = FIFO)
+    await ar.lpush(qkey, json.dumps({
         "request_id": request_id,
         "tool": tool,
         "params": params,
-    })
+    }))
+    await ar.expire(qkey, QUEUE_TTL)
 
-    # Wake up the long-poll
-    event = _poll_events.get(agent_id)
-    if event:
-        event.set()
-
-    try:
-        result = await asyncio.wait_for(future, timeout=timeout)
-        return result
-    except asyncio.TimeoutError:
-        _pending_futures.pop(request_id, None)
+    # Block until the agent posts the result to rkey (or timeout)
+    popped = await ar.brpop([rkey], timeout=int(timeout))
+    if not popped:
         return {"success": False, "error": f"Tool call timed out after {timeout}s"}
+    return json.loads(popped[1])
 
 
 def _seconds_since(dt) -> float:

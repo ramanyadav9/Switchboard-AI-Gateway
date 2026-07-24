@@ -375,7 +375,7 @@ async def _llm_stream_with_retry(http_client, url, headers, body, max_retries=3)
 
 
 async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None):
-    from app.routes.ws_agent import execute_tool
+    from app.routes.agent_poll import execute_tool
     from app.services.agent_tools import TOOL_DEFINITIONS
 
     incr_active_generations(user_id)

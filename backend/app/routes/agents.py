@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import AgentConnection, User
 from app.routes.auth import get_current_user
-from app.routes.ws_agent import execute_tool, is_agent_online, _agents
+from app.routes.agent_poll import execute_tool, is_agent_online
 
 router = APIRouter()
 install_router = APIRouter()
@@ -181,16 +181,6 @@ async def revoke_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    # If online, send disconnect message
-    if is_agent_online(agent_id):
-        agent_entry = _agents.get(agent_id)
-        if agent_entry and agent_entry["ws"]:
-            try:
-                await agent_entry["ws"].send_json({"type": "disconnect", "reason": "revoked"})
-                await agent_entry["ws"].close(code=4004)
-            except Exception:
-                pass
-
     db.delete(agent)
     db.commit()
     return {"detail": "Agent revoked"}
@@ -243,20 +233,7 @@ def get_agent_source():
                 arcname = os.path.join("switchboard-agent", "switchboard_agent", os.path.relpath(full, src_dir))
                 tar.add(full, arcname=arcname)
 
-        # Vendor websockets into switchboard-agent/vendor/
-        try:
-            import websockets as _ws
-            ws_dir = os.path.dirname(_ws.__file__)
-            for root, dirs, files in os.walk(ws_dir):
-                dirs[:] = [d for d in dirs if d not in skip_dirs]
-                for f in files:
-                    if f.endswith((".pyc", ".pyo")):
-                        continue
-                    full = os.path.join(root, f)
-                    arcname = os.path.join("switchboard-agent", "vendor", "websockets", os.path.relpath(full, ws_dir))
-                    tar.add(full, arcname=arcname)
-        except ImportError:
-            pass
+        # No vendor dependencies needed — agent uses only stdlib
 
     buf.seek(0)
     return Response(

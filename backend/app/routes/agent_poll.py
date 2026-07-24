@@ -139,7 +139,14 @@ def register_agent(
 
         # Existing agent — verify device token if approved
         if agent.status != "pending" and agent.device_token_hash:
-            if not body.device_token or not bcrypt.checkpw(
+            if not body.device_token:
+                # Agent lost its token (logout/reinstall) — reset to pending
+                agent.status = "pending"
+                agent.device_token_hash = None
+                db.commit()
+                log.info(f"Agent {agent.id} reset to pending (no device token)")
+                return {"agent_id": agent.id, "status": "pending"}
+            if not bcrypt.checkpw(
                 body.device_token.encode("utf-8"),
                 agent.device_token_hash.encode("utf-8"),
             ):

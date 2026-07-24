@@ -99,18 +99,27 @@ async def ws_agent(ws: WebSocket):
         agent_id = agent_conn.id
 
         if agent_conn.status == "pending":
-            # Send pending approval and wait
             await ws.send_json({"type": "pending_approval", "agent_id": agent_id})
-            while True:
+            max_wait = 300  # 5 minutes max
+            waited = 0
+            while waited < max_wait:
                 await asyncio.sleep(3)
-                db.refresh(agent_conn)
-                if agent_conn.status != "pending":
-                    break
-                # Check if websocket is still alive
+                waited += 3
+                db2 = SessionLocal()
+                try:
+                    fresh = db2.query(AgentConnection).filter(AgentConnection.id == agent_id).first()
+                    if not fresh or fresh.status != "pending":
+                        break
+                finally:
+                    db2.close()
                 try:
                     await ws.send_json({"type": "pending_approval", "agent_id": agent_id})
                 except Exception:
                     return
+            else:
+                await ws.send_json({"type": "disconnect", "reason": "Approval timeout"})
+                await ws.close(code=4005)
+                return
         elif agent_conn.device_token_hash:
             # Verify device_token via bcrypt
             if not device_token or not bcrypt.checkpw(
@@ -227,6 +236,11 @@ async def ws_agent(ws: WebSocket):
             pass
     finally:
         ping_task.cancel()
+        # Cancel any pending tool call futures
+        agent_entry = _agents.get(agent_id, {})
+        for req_id, future in list(agent_entry.get("pending", {}).items()):
+            if not future.done():
+                future.set_result({"success": False, "error": "Agent disconnected"})
         # Update status to offline
         db = SessionLocal()
         try:

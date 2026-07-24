@@ -72,15 +72,30 @@ class AgentConnection:
                     logger.info("Connected. Registering...")
                     await self._register()
                     await self._message_loop()
+            except asyncio.CancelledError:
+                logger.info("Connection cancelled")
+                break
             except websockets.ConnectionClosed as e:
+                if not self._running:
+                    break
                 logger.warning(f"Connection closed: {e}")
             except Exception as e:
+                if not self._running:
+                    break
                 logger.error(f"Connection error: {e}")
+            finally:
+                self.ws = None
+
             if not self._running:
                 break
             logger.info(f"Reconnecting in {backoff}s...")
-            await asyncio.sleep(backoff)
+            try:
+                await asyncio.sleep(backoff)
+            except asyncio.CancelledError:
+                break
             backoff = min(backoff * 2, 30)
+
+        logger.info("Agent stopped")
 
     async def _register(self):
         await self.ws.send(json.dumps({
@@ -97,6 +112,8 @@ class AgentConnection:
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         try:
             async for raw in self.ws:
+                if not self._running:
+                    break
                 msg = json.loads(raw)
                 msg_type = msg.get("type")
                 if msg_type == "registered":
@@ -115,16 +132,30 @@ class AgentConnection:
                     break
                 elif msg_type == "pending_approval":
                     logger.info("Waiting for approval in web UI...")
+                elif msg_type == "registered_ack":
+                    pass
+                elif msg_type == "timeout":
+                    logger.info(f"Server timeout: {msg.get('text', '')}")
+                    break
+        except websockets.ConnectionClosed:
+            pass
+        except asyncio.CancelledError:
+            pass
         finally:
             heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
     async def _heartbeat_loop(self):
-        while True:
-            await asyncio.sleep(15)
-            try:
-                await self.ws.send(json.dumps({"type": "heartbeat", "timestamp": time.time()}))
-            except Exception:
-                return
+        try:
+            while self._running:
+                await asyncio.sleep(15)
+                if self.ws and not self.ws.closed:
+                    await self.ws.send(json.dumps({"type": "heartbeat", "timestamp": time.time()}))
+        except (asyncio.CancelledError, websockets.ConnectionClosed):
+            pass
 
     async def _handle_tool_call(self, msg: dict):
         request_id = msg["request_id"]
@@ -135,9 +166,6 @@ class AgentConnection:
             perm = check_permission(tool_name, params)
             if perm == "deny":
                 raise PermissionDenied(f"Tool '{tool_name}' denied by permission rules")
-            if perm == "ask":
-                # For now, treat ask as allow (Phase 4 adds web UI prompt)
-                pass
             tool_fn = TOOLS.get(tool_name)
             if not tool_fn:
                 raise ValueError(f"Unknown tool: {tool_name}")
@@ -154,13 +182,24 @@ class AgentConnection:
             }))
         except Exception as e:
             duration_ms = int((time.time() - start) * 1000)
-            await self.ws.send(json.dumps({
-                "type": "tool_result",
-                "request_id": request_id,
-                "success": False,
-                "error": str(e),
-                "duration_ms": duration_ms,
-            }))
+            try:
+                await self.ws.send(json.dumps({
+                    "type": "tool_result",
+                    "request_id": request_id,
+                    "success": False,
+                    "error": str(e),
+                    "duration_ms": duration_ms,
+                }))
+            except Exception:
+                pass
 
     def stop(self):
         self._running = False
+        if self.ws and not self.ws.closed:
+            asyncio.ensure_future(self._close_ws())
+
+    async def _close_ws(self):
+        try:
+            await self.ws.close()
+        except Exception:
+            pass

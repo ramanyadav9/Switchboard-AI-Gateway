@@ -55,11 +55,11 @@ class ToolExecResponse(BaseModel):
 
 
 def _agent_to_response(agent: AgentConnection) -> dict:
+    from datetime import datetime, timezone
     status = agent.status
-    if status != "pending" and is_agent_online(agent.id):
-        status = "online"
-    elif status == "online" and not is_agent_online(agent.id):
-        status = "offline"
+    if status != "pending" and agent.last_seen:
+        elapsed = (datetime.now(timezone.utc) - agent.last_seen).total_seconds()
+        status = "online" if elapsed < 15 else "offline"
     return {
         "id": agent.id,
         "name": agent.name,
@@ -123,14 +123,13 @@ def approve_agent(
     if agent.status != "pending":
         raise HTTPException(status_code=400, detail="Agent is not pending approval")
 
-    device_token = secrets.token_urlsafe(32)
-    hashed = bcrypt.hashpw(device_token.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    agent.device_token_hash = hashed
-    agent.status = "offline"
+    agent.status = "online"
+    agent.device_token_hash = None
     agent.approved_at = datetime.now(timezone.utc)
+    agent.last_seen = datetime.now(timezone.utc)
     db.commit()
 
-    return {"device_token": device_token}
+    return {"detail": "Agent approved", "agent_id": agent.id}
 
 
 @router.post("/{agent_id}/exec", response_model=ToolExecResponse)

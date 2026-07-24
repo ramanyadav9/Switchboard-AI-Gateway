@@ -158,12 +158,20 @@ class AgentConnection:
                         self._url(f"/api/agent/poll?agent_id={self.agent_id}"),
                         self._headers(), timeout=10,
                     )
+                    if "error" in resp:
+                        logger.warning(f"Poll error during approval: {resp['error']}")
+                        continue
                     status = resp.get("status", "pending")
+                    if status == "approved":
+                        dt = resp.get("device_token")
+                        if dt:
+                            self.device_token = dt
+                            self._save_device_token(dt)
+                            logger.info("Approved! Device token saved.")
+                        break
                     if status != "pending":
                         logger.info("Approved!")
                         break
-                    if "error" in resp:
-                        logger.warning(f"Poll error during approval: {resp['error']}")
 
                 if not self._running:
                     break

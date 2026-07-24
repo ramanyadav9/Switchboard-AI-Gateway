@@ -186,7 +186,6 @@ async def poll_for_work(
     """Long-poll for pending tool calls. Blocks up to 30s, returns immediately if work is available."""
     user, _ = _get_auth(authorization)
 
-    # Update last_seen
     db = SessionLocal()
     try:
         agent = db.query(AgentConnection).filter(
@@ -195,9 +194,19 @@ async def poll_for_work(
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.status == "pending":
-            return {"status": "pending", "tool_calls": []}
         agent.last_seen = datetime.now(timezone.utc)
+        if agent.status == "pending":
+            db.commit()
+            return {"status": "pending", "tool_calls": []}
+        # Agent was just approved — generate and return device token
+        if not agent.device_token_hash:
+            import secrets as _secrets
+            device_token = _secrets.token_urlsafe(32)
+            hashed = bcrypt.hashpw(device_token.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            agent.device_token_hash = hashed
+            agent.status = "online"
+            db.commit()
+            return {"status": "approved", "device_token": device_token, "tool_calls": []}
         if agent.status != "online":
             agent.status = "online"
         db.commit()

@@ -264,7 +264,7 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     latency_ms = int((time.time() - start_time) * 1000)
 
     # Parse <think> tags
-    think_match = re.match(r"^<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
+    think_match = re.match(r"^\s*<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
     if think_match:
         raw_thinking = raw_thinking or think_match.group(1).strip()
         raw_content = think_match.group(2).strip()
@@ -472,7 +472,7 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
 
             # No tool calls — final text response
             if not tool_calls_accum:
-                think_match = re.match(r"^<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
+                think_match = re.match(r"^\s*<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
                 if think_match:
                     raw_thinking = raw_thinking or think_match.group(1).strip()
                     raw_content = think_match.group(2).strip()
@@ -569,7 +569,7 @@ async def _non_streaming(http_client, ctx, model, temperature, max_tokens, conve
         usage = result.get("usage", {})
 
         thinking = None
-        think_match = re.match(r"^<think>([\s\S]*?)</think>\s*([\s\S]*)$", text)
+        think_match = re.match(r"^\s*<think>([\s\S]*?)</think>\s*([\s\S]*)$", text)
         if think_match:
             thinking = think_match.group(1).strip()
             text = think_match.group(2).strip()

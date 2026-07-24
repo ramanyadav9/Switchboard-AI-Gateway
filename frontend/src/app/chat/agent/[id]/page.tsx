@@ -30,9 +30,11 @@ function agentOsIcon(os?: string): string {
 }
 
 function parseThinkTags(text: string) {
-  const match = text.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
+  // Tolerate leading whitespace/newlines the model may emit before <think>.
+  const t = text.replace(/^\s+/, "");
+  const match = t.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
   if (match) return { thinking: match[1].trim(), content: match[2].trim() };
-  const open = text.match(/^<think>([\s\S]*)$/);
+  const open = t.match(/^<think>([\s\S]*)$/);
   if (open) return { thinking: open[1].trim(), content: "" };
   return { thinking: "", content: text };
 }

@@ -62,12 +62,12 @@ export const chat = {
 };
 
 export const conversations = {
-  create: (opts?: { model?: string; system_prompt?: string; title?: string }) =>
+  create: (opts?: { model?: string; system_prompt?: string; title?: string; mode?: string }) =>
     apiFetch("/me/conversations", { method: "POST", body: JSON.stringify(opts || {}) }),
   list: (archived: boolean = false, limit: number = 50) =>
     apiFetch(`/me/conversations?archived=${archived}&limit=${limit}`),
   get: (id: string) => apiFetch(`/me/conversations/${id}`),
-  update: (id: string, data: { title?: string; system_prompt?: string; is_archived?: boolean }) =>
+  update: (id: string, data: { title?: string; system_prompt?: string; is_archived?: boolean; mode?: string }) =>
     apiFetch(`/me/conversations/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) =>
     apiFetch(`/me/conversations/${id}`, { method: "DELETE" }),

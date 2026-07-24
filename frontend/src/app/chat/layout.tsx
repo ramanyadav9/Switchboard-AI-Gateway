@@ -11,6 +11,7 @@ type Conv = {
   id: string;
   title: string | null;
   model: string;
+  mode: string;
   message_count: number;
   updated_at: string;
 };
@@ -171,7 +172,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           <button
             onClick={async () => {
               try {
-                const conv = await conversations.create();
+                const conv = await conversations.create({ mode: "agent" });
                 router.push(`/chat/agent/${conv.id}`);
               } catch { toast("Failed to create agent session", "error"); }
             }}
@@ -210,11 +211,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
               {group.label}
             </div>
             {group.items.map((conv) => {
-              const isActive = pathname === `/chat/${conv.id}`;
+              const isAgent = conv.mode === "agent";
+              const convPath = isAgent ? `/chat/agent/${conv.id}` : `/chat/${conv.id}`;
+              const isActive = pathname === convPath || pathname === `/chat/${conv.id}` || pathname === `/chat/agent/${conv.id}`;
               return (
                 <Link
                   key={conv.id}
-                  href={`/chat/${conv.id}`}
+                  href={convPath}
                   onClick={() => setSidebarOpen(false)}
                   className={`group flex items-center gap-2 px-2 py-2 rounded text-[13px] transition-colors mb-0.5 ${
                     isActive ? "" : "hover:bg-white/5"
@@ -224,7 +227,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                     color: isActive ? "var(--fg)" : "var(--fg-secondary)",
                   }}
                 >
-                  <span className="material-symbols-outlined text-[14px] shrink-0" style={{ color: "var(--fg-muted)" }}>chat_bubble</span>
+                  <span className="material-symbols-outlined text-[14px] shrink-0" style={{ color: isAgent ? "var(--accent)" : "var(--fg-muted)" }}>{isAgent ? "terminal" : "chat_bubble"}</span>
                   <div className="flex-1 min-w-0">
                     <div className="truncate">{conv.title || "New conversation"}</div>
                     <div className="flex items-center gap-2 mt-0.5">

@@ -1115,12 +1115,15 @@ export default function ConversationPage() {
                 <span className="hidden sm:inline">Research</span>
               </button>
 
-              {/* Agent mode button */}
+              {/* Agent mode button — switches this conversation to agent mode */}
               <button
-                onClick={() => router.push(`/chat/agent/${id}`)}
+                onClick={async () => {
+                  try { await conversations.update(id, { mode: "agent" } as never); } catch {}
+                  router.push(`/chat/agent/${id}`);
+                }}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
                 style={{ color: "var(--fg-muted)" }}
-                title="Open in Agent Mode"
+                title="Switch to Agent Mode"
               >
                 <span className="material-symbols-outlined text-[14px]">terminal</span>
                 <span className="hidden sm:inline">Agent</span>

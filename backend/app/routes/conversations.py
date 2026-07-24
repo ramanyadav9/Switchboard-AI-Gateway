@@ -21,12 +21,14 @@ class ConversationCreate(BaseModel):
     model: str | None = None
     system_prompt: str | None = None
     title: str | None = None
+    mode: str | None = None
 
 
 class ConversationResponse(BaseModel):
     id: str
     title: str | None
     model: str
+    mode: str
     total_tokens: int
     is_archived: bool
     message_count: int
@@ -60,12 +62,14 @@ def create_conversation(
         title=body.title,
         model=body.model or settings.DEFAULT_MODEL,
         system_prompt=body.system_prompt,
+        mode=body.mode or "chat",
     )
     db.add(conv)
     db.commit()
     db.refresh(conv)
     return ConversationResponse(
         id=conv.id, title=conv.title, model=conv.model,
+        mode=conv.mode or "chat",
         total_tokens=0, is_archived=False, message_count=0,
         created_at=conv.created_at, updated_at=conv.updated_at,
     )
@@ -91,6 +95,7 @@ def list_conversations(
         msg_count = db.query(func.count(ChatMessage.id)).filter(ChatMessage.conversation_id == c.id).scalar() or 0
         result.append(ConversationResponse(
             id=c.id, title=c.title, model=c.model,
+            mode=getattr(c, "mode", None) or "chat",
             total_tokens=c.total_tokens, is_archived=c.is_archived,
             message_count=msg_count,
             created_at=c.created_at, updated_at=c.updated_at,
@@ -116,6 +121,7 @@ def get_conversation(
     msg_count = len(messages)
     return ConversationDetail(
         id=conv.id, title=conv.title, model=conv.model,
+        mode=getattr(conv, "mode", None) or "chat",
         system_prompt=conv.system_prompt,
         total_tokens=conv.total_tokens, is_archived=conv.is_archived,
         message_count=msg_count,
@@ -164,6 +170,7 @@ def update_conversation(
     title: str | None = None,
     system_prompt: str | None = None,
     is_archived: bool | None = None,
+    mode: str | None = None,
 ):
     conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == current_user.id).first()
     if not conv:
@@ -174,6 +181,8 @@ def update_conversation(
         conv.system_prompt = system_prompt
     if is_archived is not None:
         conv.is_archived = is_archived
+    if mode is not None:
+        conv.mode = mode
     db.commit()
     return {"detail": "Updated"}
 

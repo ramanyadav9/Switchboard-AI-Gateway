@@ -210,7 +210,12 @@ async def ws_agent(ws: WebSocket):
                 request_id = msg.get("request_id", "")
                 future = _agents.get(agent_id, {}).get("pending", {}).pop(request_id, None)
                 if future and not future.done():
-                    future.set_result(msg.get("result", {}))
+                    future.set_result({
+                        "success": msg.get("success", False),
+                        "result": msg.get("result"),
+                        "error": msg.get("error"),
+                        "duration_ms": msg.get("duration_ms"),
+                    })
                 continue
 
     except WebSocketDisconnect:

@@ -5,7 +5,7 @@ import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
 
-type Message = { id?: string; role: string; content: string; thinking?: string };
+type Message = { id?: string; role: string; content: string; thinking?: string; message_type?: string };
 
 function parseThinkTags(text: string) {
   const match = text.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
@@ -455,14 +455,20 @@ export default function ConversationPage() {
         setModel(m);
         setSelectedModel(m);
         setMessages(
-          (data.messages || []).map(
-            (m: { id: string; role: string; content: string; thinking?: string }) => ({
-              id: m.id,
-              role: m.role,
-              content: m.content,
-              thinking: m.thinking || undefined,
-            })
-          )
+          (data.messages || [])
+            .filter((m: { role: string; message_type?: string }) =>
+              // Hide agent tool activity in plain chat view
+              m.role !== "tool" && m.message_type !== "tool_call"
+            )
+            .map(
+              (m: { id: string; role: string; content: string; thinking?: string; message_type?: string }) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                thinking: m.thinking || undefined,
+                message_type: m.message_type || "text",
+              })
+            )
         );
         if (!promptApplied.current) {
           const prompt = searchParams.get("prompt");

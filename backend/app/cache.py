@@ -9,15 +9,28 @@ from app.config import get_settings
 settings = get_settings()
 
 pool = redis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True)
-_async_pool = aioredis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 def get_redis() -> redis.Redis:
     return redis.Redis(connection_pool=pool)
 
 
+# Async client is created lazily, per-process, inside the worker's own event loop.
+# redis.asyncio pools are NOT fork-safe, so we must NOT create one at import time
+# (uvicorn --workers N forks the process before the event loop exists).
+_async_client: aioredis.Redis | None = None
+
+
 def get_async_redis() -> aioredis.Redis:
-    return aioredis.Redis(connection_pool=_async_pool)
+    global _async_client
+    if _async_client is None:
+        _async_client = aioredis.Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30,
+        )
+    return _async_client
 
 
 SESSION_TTL = 30 * 60  # 30 minutes

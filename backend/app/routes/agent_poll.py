@@ -222,21 +222,27 @@ async def poll_for_work(
         db.close()
 
     # Blocking pop from Redis queue (this IS the long-poll — works across all workers)
-    ar = get_async_redis()
-    qkey = _queue_key(agent_id)
-    popped = await ar.brpop([qkey], timeout=LONG_POLL_TIMEOUT)
-    if not popped:
+    try:
+        ar = get_async_redis()
+        qkey = _queue_key(agent_id)
+        popped = await ar.brpop([qkey], timeout=LONG_POLL_TIMEOUT)
+        if not popped:
+            return {"status": "online", "tool_calls": []}
+
+        calls = [json.loads(popped[1])]
+        # Drain any other immediately-available calls (non-blocking)
+        while True:
+            more = await ar.rpop(qkey)
+            if not more:
+                break
+            calls.append(json.loads(more))
+
+        return {"status": "online", "tool_calls": calls}
+    except Exception:
+        # A Redis hiccup must not flap the agent — return an empty poll and log it.
+        log.exception("poll_for_work Redis error")
+        await asyncio.sleep(1)
         return {"status": "online", "tool_calls": []}
-
-    calls = [json.loads(popped[1])]
-    # Drain any other immediately-available calls (non-blocking)
-    while True:
-        more = await ar.rpop(qkey)
-        if not more:
-            break
-        calls.append(json.loads(more))
-
-    return {"status": "online", "tool_calls": calls}
 
 
 @router.post("/agent/result")
@@ -262,16 +268,20 @@ async def submit_result(
         db.close()
 
     # Push result to Redis so the waiting agentic loop (any worker) picks it up
-    ar = get_async_redis()
-    rkey = _result_key(body.request_id)
-    await ar.lpush(rkey, json.dumps({
-        "success": body.success,
-        "result": body.result,
-        "error": body.error,
-        "duration_ms": body.duration_ms,
-    }))
-    await ar.expire(rkey, RESULT_TTL)
-    return {"status": "accepted"}
+    try:
+        ar = get_async_redis()
+        rkey = _result_key(body.request_id)
+        await ar.lpush(rkey, json.dumps({
+            "success": body.success,
+            "result": body.result,
+            "error": body.error,
+            "duration_ms": body.duration_ms,
+        }))
+        await ar.expire(rkey, RESULT_TTL)
+        return {"status": "accepted"}
+    except Exception:
+        log.exception("submit_result Redis error")
+        raise HTTPException(status_code=503, detail="Result queue unavailable")
 
 
 # ---------- Functions used by the agentic loop (chat.py) ----------

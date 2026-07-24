@@ -64,9 +64,10 @@ def _seconds_since(dt) -> float:
 
 
 def _agent_to_response(agent: AgentConnection) -> dict:
+    from app.routes.agent_poll import AGENT_ONLINE_THRESHOLD
     status = agent.status
     if status != "pending" and agent.last_seen:
-        status = "online" if _seconds_since(agent.last_seen) < 15 else "offline"
+        status = "online" if _seconds_since(agent.last_seen) < AGENT_ONLINE_THRESHOLD else "offline"
     return {
         "id": agent.id,
         "name": agent.name,

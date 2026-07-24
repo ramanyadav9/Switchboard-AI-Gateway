@@ -1051,12 +1051,17 @@ export default function AgentConversationPage() {
             // Skip tool-role messages — they're shown inline with the tool_call
             if (m.role === "tool") return null;
 
-            // Tool call assistant messages — render ToolCallBlocks
+            // Tool call assistant messages — render thinking + ToolCallBlocks
             if (m.role === "assistant" && m.message_type === "tool_call" && m.tool_calls_json) {
               const toolResults = messages.filter(rm => rm.role === "tool" && m.tool_calls_json?.some(tc => tc.id === rm.tool_call_id));
+              const parsedTc = parseThinkTags(m.content || "");
+              const tcThinking = m.thinking || parsedTc.thinking;
+              const tcText = parsedTc.content;
               return (
                 <div key={m.id || i} className="flex justify-start animate-fade-in">
                   <div className="max-w-[85%] w-full">
+                    {tcThinking && <ThinkingBlock content={tcThinking} />}
+                    {tcText && <div className="mb-2 text-[14px] leading-[22px]"><MessageContent text={tcText} /></div>}
                     {m.tool_calls_json.map((tc, j) => {
                       let params: Record<string, string> = {};
                       try { params = JSON.parse(tc.arguments || "{}"); } catch { /* skip */ }
@@ -1073,7 +1078,6 @@ export default function AgentConversationPage() {
                       }
                       return <ToolCallBlock key={j} tool={tc.name} params={params} result={result} error={error} success={success} />;
                     })}
-                    {m.content && <div className="mt-2 text-[13px]" style={{ color: "var(--fg-secondary)" }}><MessageContent text={m.content} /></div>}
                   </div>
                 </div>
               );

@@ -6,7 +6,8 @@ import Link from "next/link";
 import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
 
-type Message = { id?: string; role: string; content: string; thinking?: string };
+type ToolCall = { id?: string; name: string; arguments?: string; tool?: string; params?: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number };
+type Message = { id?: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string };
 
 function parseThinkTags(text: string) {
   const match = text.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
@@ -300,45 +301,90 @@ function SearchIndicator({ phase, results }: { phase: string; results: { title: 
   );
 }
 
-function ToolCallBlock({ tool, params, result, error, success, duration }: {
+function ToolCallBlock({ tool, params, result, error, success, duration, isLive }: {
   tool: string; params: Record<string, string>;
-  result?: unknown; error?: string; success?: boolean; duration?: number;
+  result?: unknown; error?: string; success?: boolean; duration?: number; isLive?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const icons: Record<string, string> = {
     read_file: "description", write_file: "edit_document", edit_file: "find_replace",
     bash: "terminal", grep: "search", glob: "folder_open", ls: "folder",
   };
+  const isPending = success === undefined && !error;
+  const statusColor = isPending ? "var(--fg-muted)" : success === false ? "var(--error)" : "var(--success)";
+
+  function formatResult(r: unknown): string {
+    if (typeof r === "string") return r;
+    if (!r || typeof r !== "object") return JSON.stringify(r, null, 2);
+    const obj = r as Record<string, unknown>;
+    if (obj.content && typeof obj.content === "string") return obj.content;
+    if (obj.output && typeof obj.output === "string") return obj.output;
+    if (obj.entries && Array.isArray(obj.entries)) {
+      return (obj.entries as {name: string; type: string; size?: number}[])
+        .map(e => `${e.type === "dir" ? "📁" : "📄"} ${e.name}${e.size ? `  (${e.size > 1024 ? (e.size/1024).toFixed(1)+"K" : e.size+"B"})` : ""}`)
+        .join("\n");
+    }
+    if (obj.results && Array.isArray(obj.results)) {
+      return (obj.results as {file: string; matches: string[]}[])
+        .map(r => `${r.file}\n${(r.matches||[]).join("\n")}`)
+        .join("\n\n");
+    }
+    if (obj.files && Array.isArray(obj.files)) {
+      return (obj.files as {path: string; size?: number; is_dir?: boolean}[])
+        .map(f => `${f.is_dir ? "📁" : "📄"} ${f.path}`)
+        .join("\n");
+    }
+    if (obj.edited) return `✓ Edited ${obj.edited}`;
+    if (obj.written) return `✓ Written ${obj.written} bytes to ${obj.path || "file"}`;
+    return JSON.stringify(r, null, 2);
+  }
+
+  const summary = tool === "bash" && params.command ? `$ ${String(params.command).slice(0, 80)}`
+    : (tool === "read_file" || tool === "write_file" || tool === "edit_file" || tool === "grep" || tool === "glob") && params.path ? String(params.path)
+    : tool === "ls" ? (params.path || ".") : "";
+
   return (
-    <div className="my-2 rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+    <div className="my-1.5 rounded-lg overflow-hidden" style={{ border: `1px solid ${isPending ? "var(--accent)" : "var(--border)"}` }}>
       <button onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5"
+        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] transition-colors hover:brightness-110"
         style={{ background: "var(--bg-muted)" }}>
-        <span className="material-symbols-outlined text-[14px]" style={{ color: success === false ? "var(--error)" : "var(--accent)" }}>
-          {icons[tool] || "build"}
-        </span>
-        <span className="font-[family-name:var(--font-mono)] font-medium">{tool}</span>
-        {tool === "bash" && params.command && (
-          <span className="font-[family-name:var(--font-mono)] truncate" style={{ color: "var(--fg-muted)" }}>{String(params.command).slice(0, 60)}</span>
+        {isPending && isLive ? (
+          <div className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin shrink-0" style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }} />
+        ) : (
+          <span className="material-symbols-outlined text-[14px]" style={{ color: statusColor }}>
+            {icons[tool] || "build"}
+          </span>
         )}
-        {tool === "read_file" && params.path && (
-          <span className="font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>{String(params.path)}</span>
+        <span className="font-[family-name:var(--font-mono)] font-semibold" style={{ color: statusColor }}>{tool}</span>
+        {summary && (
+          <span className="font-[family-name:var(--font-mono)] truncate flex-1 text-left" style={{ color: "var(--fg-muted)" }}>{summary}</span>
         )}
-        {(tool === "write_file" || tool === "edit_file") && params.path && (
-          <span className="font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>{String(params.path)}</span>
-        )}
-        <span className="ml-auto flex items-center gap-2">
-          {duration && <span className="font-[family-name:var(--font-mono)] text-[10px]" style={{ color: "var(--fg-muted)" }}>{duration}ms</span>}
-          {success === true && <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--success)" }}>check_circle</span>}
-          {success === false && <span className="material-symbols-outlined text-[12px]" style={{ color: "var(--error)" }}>error</span>}
+        <span className="ml-auto flex items-center gap-2 shrink-0">
+          {duration != null && duration > 0 && (
+            <span className="font-[family-name:var(--font-mono)] text-[10px] px-1.5 py-0.5 rounded" style={{ color: "var(--fg-muted)", background: "var(--bg)" }}>
+              {duration > 1000 ? `${(duration/1000).toFixed(1)}s` : `${duration}ms`}
+            </span>
+          )}
+          {success === true && <span className="material-symbols-outlined text-[13px]" style={{ color: "var(--success)" }}>check_circle</span>}
+          {success === false && <span className="material-symbols-outlined text-[13px]" style={{ color: "var(--error)" }}>cancel</span>}
           <span className={`material-symbols-outlined text-[12px] transition-transform ${open ? "rotate-180" : ""}`} style={{ color: "var(--fg-muted)" }}>expand_more</span>
         </span>
       </button>
       {open && (
-        <div className="px-3 py-2 font-[family-name:var(--font-mono)] text-[12px] max-h-[300px] overflow-auto" style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}>
-          {error ? <div style={{ color: "var(--error)" }}>{error}</div> :
-           result ? <pre className="whitespace-pre-wrap">{typeof result === "string" ? result : JSON.stringify(result, null, 2)}</pre> :
-           <div style={{ color: "var(--fg-muted)" }}>Executing...</div>}
+        <div className="px-3 py-2 font-[family-name:var(--font-mono)] text-[12px] leading-[18px] max-h-[400px] overflow-auto" style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}>
+          {error ? (
+            <div className="flex items-start gap-2">
+              <span className="material-symbols-outlined text-[13px] mt-0.5 shrink-0" style={{ color: "var(--error)" }}>error</span>
+              <pre className="whitespace-pre-wrap" style={{ color: "var(--error)" }}>{error}</pre>
+            </div>
+          ) : result ? (
+            <pre className="whitespace-pre-wrap">{formatResult(result)}</pre>
+          ) : (
+            <div className="flex items-center gap-2" style={{ color: "var(--fg-muted)" }}>
+              <div className="w-3 h-3 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }} />
+              Running...
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -528,11 +574,14 @@ export default function AgentConversationPage() {
         setSelectedModel(m);
         setMessages(
           (data.messages || []).map(
-            (m: { id: string; role: string; content: string; thinking?: string }) => ({
+            (m: { id: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string }) => ({
               id: m.id,
               role: m.role,
               content: m.content,
               thinking: m.thinking || undefined,
+              message_type: m.message_type || "text",
+              tool_calls_json: m.tool_calls_json || undefined,
+              tool_call_id: m.tool_call_id || undefined,
             })
           )
         );
@@ -989,7 +1038,39 @@ export default function AgentConversationPage() {
             </div>
           )}
 
-          {messages.map((m, i) => (
+          {messages.map((m, i) => {
+            // Skip tool-role messages — they're shown inline with the tool_call
+            if (m.role === "tool") return null;
+
+            // Tool call assistant messages — render ToolCallBlocks
+            if (m.role === "assistant" && m.message_type === "tool_call" && m.tool_calls_json) {
+              const toolResults = messages.filter(rm => rm.role === "tool" && m.tool_calls_json?.some(tc => tc.id === rm.tool_call_id));
+              return (
+                <div key={m.id || i} className="flex justify-start animate-fade-in">
+                  <div className="max-w-[85%] w-full">
+                    {m.tool_calls_json.map((tc, j) => {
+                      let params: Record<string, string> = {};
+                      try { params = JSON.parse(tc.arguments || "{}"); } catch { /* skip */ }
+                      const resultMsg = toolResults.find(rm => rm.tool_call_id === tc.id);
+                      let result: unknown = undefined;
+                      let error: string | undefined;
+                      let success: boolean | undefined;
+                      if (resultMsg) {
+                        try {
+                          const parsed = JSON.parse(resultMsg.content);
+                          if (parsed.error) { error = parsed.error; success = false; }
+                          else { result = parsed; success = true; }
+                        } catch { result = resultMsg.content; success = true; }
+                      }
+                      return <ToolCallBlock key={j} tool={tc.name} params={params} result={result} error={error} success={success} />;
+                    })}
+                    {m.content && <div className="mt-2 text-[13px]" style={{ color: "var(--fg-secondary)" }}><MessageContent text={m.content} /></div>}
+                  </div>
+                </div>
+              );
+            }
+
+            return (
             <div
               key={m.id || i}
               className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} animate-fade-in`}
@@ -1023,13 +1104,14 @@ export default function AgentConversationPage() {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
 
           {/* Streaming tool calls */}
           {streaming && toolCalls.length > 0 && (
             <div className="flex justify-start animate-fade-in">
-              <div className="max-w-[85%]">
-                {toolCalls.map((tc, i) => <ToolCallBlock key={i} {...tc} />)}
+              <div className="max-w-[85%] w-full">
+                {toolCalls.map((tc, i) => <ToolCallBlock key={i} {...tc} isLive />)}
               </div>
             </div>
           )}

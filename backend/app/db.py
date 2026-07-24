@@ -41,18 +41,31 @@ def init_db() -> None:
 
 
 def _sync_table_schemas(inspector) -> None:
-    """Drop and recreate tables whose columns don't match the model."""
+    """Add missing columns to existing tables via ALTER TABLE (non-destructive)."""
+    import logging
     from sqlalchemy import text
+    log = logging.getLogger("switchboard")
     for table in Base.metadata.sorted_tables:
         if not inspector.has_table(table.name):
             continue
         model_cols = {c.name for c in table.columns}
         db_cols = {c["name"] for c in inspector.get_columns(table.name)}
         missing = model_cols - db_cols
-        if missing:
-            with engine.begin() as conn:
-                conn.execute(text(f"DROP TABLE IF EXISTS {table.name} CASCADE"))
-            import logging
-            logging.getLogger("switchboard").info(
-                f"Recreating table '{table.name}' (missing columns: {missing})"
-            )
+        if not missing:
+            continue
+        with engine.begin() as conn:
+            for col_name in missing:
+                col = table.columns[col_name]
+                col_type = col.type.compile(engine.dialect)
+                if col.nullable:
+                    default = ""
+                elif col.default is not None:
+                    default = f" DEFAULT {col.default.arg!r}" if hasattr(col.default, "arg") else ""
+                else:
+                    default = " DEFAULT ''"
+                stmt = f"ALTER TABLE {table.name} ADD COLUMN {col_name} {col_type}{' NULL' if col.nullable else ''}{default}"
+                try:
+                    conn.execute(text(stmt))
+                    log.info(f"Added column '{table.name}.{col_name}' ({col_type})")
+                except Exception as e:
+                    log.warning(f"Could not add column '{table.name}.{col_name}': {e}")

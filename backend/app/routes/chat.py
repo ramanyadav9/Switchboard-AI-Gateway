@@ -283,6 +283,7 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
 
 
 def _save_tool_execution(conversation_id: str, agent_id: str, tool_name: str, params: dict, result: dict, turn: int):
+    import logging
     db = SessionLocal()
     try:
         from app.models import ToolExecution
@@ -301,6 +302,7 @@ def _save_tool_execution(conversation_id: str, agent_id: str, tool_name: str, pa
         db.add(te)
         db.commit()
     except Exception:
+        logging.getLogger("switchboard").exception(f"Failed to save tool execution: {tool_name}")
         db.rollback()
     finally:
         db.close()
@@ -308,8 +310,10 @@ def _save_tool_execution(conversation_id: str, agent_id: str, tool_name: str, pa
 
 def _save_tool_message(conversation_id: str, role: str, content: str, message_type: str,
                        tool_calls_json: list | None = None, tool_call_id: str | None = None):
+    import logging
     db = SessionLocal()
     try:
+        token_count = estimate_tokens(content or "")
         msg = ChatMessage(
             id=str(uuid.uuid4()),
             conversation_id=conversation_id,
@@ -318,14 +322,22 @@ def _save_tool_message(conversation_id: str, role: str, content: str, message_ty
             message_type=message_type,
             tool_calls_json=tool_calls_json,
             tool_call_id=tool_call_id,
-            token_count=estimate_tokens(content),
+            token_count=token_count,
         )
         db.add(msg)
+        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv:
+            conv.total_tokens = (conv.total_tokens or 0) + token_count
+            from datetime import datetime, timezone
+            conv.updated_at = datetime.now(timezone.utc)
         db.commit()
     except Exception:
+        logging.getLogger("switchboard").exception(f"Failed to save tool message: {role}/{message_type}")
         db.rollback()
     finally:
         db.close()
+    cache_message(conversation_id, role, content or "", None, estimate_tokens(content or ""),
+                  message_type, tool_calls_json, tool_call_id)
 
 
 DOOM_LOOP_THRESHOLD = 3
@@ -375,11 +387,11 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
     start_time = time.time()
     max_turns = 10
     tool_call_history: list[tuple[str, str]] = []
+    completed_normally = False
 
-    # Save user message
     loop = asyncio.get_event_loop()
     user_tokens = estimate_tokens(user_content)
-    loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
+    await loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
     loop.run_in_executor(None, _auto_title, conversation_id, user_content)
 
     try:
@@ -464,6 +476,7 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
                 if think_match:
                     raw_thinking = raw_thinking or think_match.group(1).strip()
                     raw_content = think_match.group(2).strip()
+                completed_normally = True
                 break
 
             # Build assistant message with tool_calls
@@ -523,11 +536,11 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
         decr_active_generations(user_id)
 
     latency_ms = int((time.time() - start_time) * 1000)
-    assistant_tokens = total_completion or estimate_tokens(raw_content)
 
-    # Save final assistant text
-    loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
-    loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
+    if completed_normally:
+        assistant_tokens = total_completion or estimate_tokens(raw_content)
+        loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
+        loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': total_prompt, 'completion_tokens': total_completion, 'latency_ms': latency_ms}})}\n\n"
 

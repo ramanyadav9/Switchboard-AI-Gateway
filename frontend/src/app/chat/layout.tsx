@@ -123,7 +123,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     try {
       await conversations.delete(id);
       loadConversations();
-      if (pathname === `/chat/${id}`) router.push("/chat");
+      if (pathname === `/chat/${id}` || pathname === `/chat/agent/${id}`) router.push("/chat");
     } catch {
       toast("Failed to delete conversation", "error");
     }

@@ -9,7 +9,7 @@ type Agent = {
   name: string;
   hostname: string;
   os: string;
-  working_dir: string;
+  workspace: string;
   status: "pending" | "online" | "offline";
   tools?: string[];
   last_seen?: string;
@@ -526,7 +526,7 @@ switchboard-agent connect ${serverUrl || "YOUR_SERVER"} --key YOUR_KEY`}
                       <span className="material-symbols-outlined text-[14px]">{osIcon(agent.os)}</span>
                       <span>{agent.os || "Unknown OS"}</span>
                       <span style={{ color: "var(--border)" }}>|</span>
-                      <span>{agent.working_dir || "~"}</span>
+                      <span>{agent.workspace || "~"}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -593,7 +593,7 @@ switchboard-agent connect ${serverUrl || "YOUR_SERVER"} --key YOUR_KEY`}
                           {agent.os || "Unknown"}
                         </span>
                         <span style={{ color: "var(--border)" }}>|</span>
-                        <span>{agent.working_dir || "~"}</span>
+                        <span>{agent.workspace || "~"}</span>
                         {agent.tools && agent.tools.length > 0 && (
                           <>
                             <span style={{ color: "var(--border)" }}>|</span>
@@ -931,7 +931,7 @@ switchboard-agent connect ${serverUrl || "YOUR_SERVER"} --key YOUR_KEY`}
                         {agent.os || "Unknown"}
                       </span>
                       <span style={{ color: "var(--border)" }}>|</span>
-                      <span>{agent.working_dir || "~"}</span>
+                      <span>{agent.workspace || "~"}</span>
                       <span style={{ color: "var(--border)" }}>|</span>
                       <span>Last seen {relativeTime(agent.last_seen)}</span>
                     </div>

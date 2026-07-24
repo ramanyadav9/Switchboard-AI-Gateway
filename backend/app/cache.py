@@ -18,10 +18,12 @@ SESSION_TTL = 30 * 60  # 30 minutes
 MAX_SESSION_MESSAGES = 40
 
 
-def cache_message(conversation_id: str, role: str, content: str, thinking: str | None = None, token_count: int = 0):
+def cache_message(conversation_id: str, role: str, content: str, thinking: str | None = None, token_count: int = 0,
+                   message_type: str = "text", tool_calls_json: list | None = None, tool_call_id: str | None = None):
     r = get_redis()
     key = f"session:{conversation_id}"
-    msg = json.dumps({"role": role, "content": content, "thinking": thinking, "token_count": token_count})
+    msg = json.dumps({"role": role, "content": content, "thinking": thinking, "token_count": token_count,
+                       "message_type": message_type, "tool_calls_json": tool_calls_json, "tool_call_id": tool_call_id})
     r.rpush(key, msg)
     r.ltrim(key, -MAX_SESSION_MESSAGES, -1)
     r.expire(key, SESSION_TTL)

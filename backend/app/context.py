@@ -99,6 +99,41 @@ def _fetch_rag_context(user_id: str, query: str, db: Session) -> tuple[str, list
         return "", []
 
 
+def _reconstruct_msg(m: dict) -> dict:
+    """Reconstruct an OpenAI-compatible message dict from cached data."""
+    msg: dict = {"role": m["role"], "content": m.get("content", "")}
+    tc = m.get("tool_calls_json")
+    if tc and m["role"] == "assistant":
+        msg["tool_calls"] = [
+            {"id": t.get("id", ""), "type": "function",
+             "function": {"name": t["name"], "arguments": t.get("arguments", "{}")}}
+            for t in tc
+        ]
+        if not msg["content"]:
+            msg["content"] = None
+    if m.get("tool_call_id") and m["role"] == "tool":
+        msg["tool_call_id"] = m["tool_call_id"]
+    return msg
+
+
+def _reconstruct_msg_from_db(m) -> dict:
+    """Reconstruct an OpenAI-compatible message dict from a ChatMessage ORM object."""
+    msg: dict = {"role": m.role, "content": m.content}
+    tc = getattr(m, "tool_calls_json", None)
+    if tc and m.role == "assistant":
+        msg["tool_calls"] = [
+            {"id": t.get("id", ""), "type": "function",
+             "function": {"name": t["name"], "arguments": t.get("arguments", "{}")}}
+            for t in tc
+        ]
+        if not msg["content"]:
+            msg["content"] = None
+    tcid = getattr(m, "tool_call_id", None)
+    if tcid and m.role == "tool":
+        msg["tool_call_id"] = tcid
+    return msg
+
+
 def build_prompt(
     conversation: Conversation,
     new_message: str,
@@ -133,8 +168,8 @@ def build_prompt(
 
     cached = get_cached_messages(conversation.id)
     if cached is not None:
-        history = [{"role": m["role"], "content": m["content"]} for m in cached]
-        token_counts = [m.get("token_count", estimate_tokens(m["content"])) for m in cached]
+        history = [_reconstruct_msg(m) for m in cached]
+        token_counts = [m.get("token_count", estimate_tokens(m.get("content", ""))) for m in cached]
     else:
         db_msgs = (
             db.query(ChatMessage)
@@ -142,10 +177,13 @@ def build_prompt(
             .order_by(ChatMessage.created_at.asc())
             .all()
         )
-        history = [{"role": m.role, "content": m.content} for m in db_msgs]
+        history = [_reconstruct_msg_from_db(m) for m in db_msgs]
         token_counts = [m.token_count or estimate_tokens(m.content) for m in db_msgs]
         for m in db_msgs:
-            cache_message(conversation.id, m.role, m.content, m.thinking, m.token_count)
+            cache_message(conversation.id, m.role, m.content, m.thinking, m.token_count,
+                          getattr(m, "message_type", "text"),
+                          getattr(m, "tool_calls_json", None),
+                          getattr(m, "tool_call_id", None))
 
     selected: list[dict] = []
     selected_tokens = 0
@@ -160,7 +198,7 @@ def build_prompt(
         selected_tokens += msg_tokens
 
     final = system_msgs + summary_msgs + selected + [{"role": "user", "content": new_message}]
-    total = sum(estimate_tokens(m["content"]) for m in final)
+    total = sum(estimate_tokens(m.get("content") or "") for m in final)
 
     return ChatContext(
         messages=final,
@@ -186,7 +224,8 @@ def build_summary_messages(conversation_id: str, db: Session) -> str:
     if len(msgs) < SUMMARY_TRIGGER:
         return ""
     cutoff = len(msgs) - 4
-    to_summarize = msgs[:cutoff]
+    to_summarize = [m for m in msgs[:cutoff]
+                    if getattr(m, "message_type", "text") not in ("tool_call", "tool_result") and m.role != "tool"]
     text = "\n".join(f"{m.role}: {m.content[:300]}" for m in to_summarize)
     if len(text) > 4000:
         text = text[:4000] + "..."

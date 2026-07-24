@@ -47,6 +47,9 @@ class MessageResponse(BaseModel):
     content: str
     thinking: str | None
     token_count: int
+    message_type: str = "text"
+    tool_calls_json: list | None = None
+    tool_call_id: str | None = None
     created_at: datetime
 
 
@@ -157,32 +160,40 @@ def get_messages(
     messages = query.order_by(ChatMessage.created_at.desc()).limit(limit).all()
     messages.reverse()
     return [
-        MessageResponse(id=m.id, role=m.role, content=m.content, thinking=m.thinking, token_count=m.token_count, created_at=m.created_at)
+        MessageResponse(id=m.id, role=m.role, content=m.content, thinking=m.thinking, token_count=m.token_count,
+                        message_type=getattr(m, "message_type", "text"),
+                        tool_calls_json=getattr(m, "tool_calls_json", None),
+                        tool_call_id=getattr(m, "tool_call_id", None),
+                        created_at=m.created_at)
         for m in messages
     ]
+
+
+class ConversationUpdate(BaseModel):
+    title: str | None = None
+    system_prompt: str | None = None
+    is_archived: bool | None = None
+    mode: str | None = None
 
 
 @router.patch("/{conv_id}")
 def update_conversation(
     conv_id: str,
+    body: ConversationUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-    title: str | None = None,
-    system_prompt: str | None = None,
-    is_archived: bool | None = None,
-    mode: str | None = None,
 ):
     conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == current_user.id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if title is not None:
-        conv.title = title
-    if system_prompt is not None:
-        conv.system_prompt = system_prompt
-    if is_archived is not None:
-        conv.is_archived = is_archived
-    if mode is not None:
-        conv.mode = mode
+    if body.title is not None:
+        conv.title = body.title
+    if body.system_prompt is not None:
+        conv.system_prompt = body.system_prompt
+    if body.is_archived is not None:
+        conv.is_archived = body.is_archived
+    if body.mode is not None:
+        conv.mode = body.mode
     db.commit()
     return {"detail": "Updated"}
 

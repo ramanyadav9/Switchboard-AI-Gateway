@@ -77,8 +77,6 @@ async def ws_agent(ws: WebSocket):
             AgentConnection.user_id == user.id,
         ).first()
 
-        new_device_token = None
-
         if not agent_conn:
             # Create new pending connection
             agent_conn = AgentConnection(
@@ -148,10 +146,7 @@ async def ws_agent(ws: WebSocket):
     }
 
     # Send registered message
-    reg_msg: dict = {"type": "registered", "agent_id": agent_id}
-    if new_device_token:
-        reg_msg["device_token"] = new_device_token
-    await ws.send_json(reg_msg)
+    await ws.send_json({"type": "registered", "agent_id": agent_id})
 
     last_activity = time.monotonic()
 

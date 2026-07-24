@@ -682,20 +682,29 @@ export default function AgentConversationPage() {
                 i === prev.length - 1 ? { ...tc, result: msg.result, error: msg.error, success: msg.success, duration: msg.duration_ms } : tc
               ));
             } else if (msg.type === "done") {
-              const parsed = parseThinkTags(rawContent);
-              const finalThinking = rawThinking || parsed.thinking;
-              const finalContent = parsed.content || rawContent;
-              setMessages([
-                ...updated,
-                {
-                  role: "assistant",
-                  content: finalContent || "No response",
-                  thinking: finalThinking || undefined,
-                },
-              ]);
               setStreamContent("");
               setStreamThinking("");
               setToolCalls([]);
+              conversations.get(id).then((data) => {
+                setMessages(
+                  (data.messages || []).map(
+                    (msg: { id: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string }) => ({
+                      id: msg.id, role: msg.role, content: msg.content,
+                      thinking: msg.thinking || undefined,
+                      message_type: msg.message_type || "text",
+                      tool_calls_json: msg.tool_calls_json || undefined,
+                      tool_call_id: msg.tool_call_id || undefined,
+                    })
+                  )
+                );
+              }).catch(() => {
+                const parsed = parseThinkTags(rawContent);
+                setMessages([...updated, {
+                  role: "assistant",
+                  content: parsed.content || rawContent || "No response",
+                  thinking: rawThinking || parsed.thinking || undefined,
+                }]);
+              });
             } else if (msg.type === "error") {
               toast(`Stream error: ${msg.text}`, "error");
               setMessages([
@@ -912,7 +921,7 @@ export default function AgentConversationPage() {
     setInput("");
     switch (cmd) {
       case "clear":
-        conversations.create().then((conv: { id: string }) => router.push(`/chat/agent/${conv.id}`)).catch(() => toast("Failed", "error"));
+        conversations.create({ mode: "agent" }).then((conv: { id: string }) => router.push(`/chat/agent/${conv.id}`)).catch(() => toast("Failed", "error"));
         break;
       case "compact":
         setInput("Please summarize our conversation so far in a few key points.");

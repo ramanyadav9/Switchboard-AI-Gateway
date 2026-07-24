@@ -54,12 +54,19 @@ class ToolExecResponse(BaseModel):
 # ---------- Helpers ----------
 
 
+def _seconds_since(dt) -> float:
+    """Elapsed seconds since dt, tolerant of naive/aware datetimes from the DB."""
+    if dt is None:
+        return 1e9
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds()
+
+
 def _agent_to_response(agent: AgentConnection) -> dict:
-    from datetime import datetime, timezone
     status = agent.status
     if status != "pending" and agent.last_seen:
-        elapsed = (datetime.now(timezone.utc) - agent.last_seen).total_seconds()
-        status = "online" if elapsed < 15 else "offline"
+        status = "online" if _seconds_since(agent.last_seen) < 15 else "offline"
     return {
         "id": agent.id,
         "name": agent.name,
@@ -120,8 +127,9 @@ def approve_agent(
     ).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    # Idempotent — already approved is fine
     if agent.status != "pending":
-        raise HTTPException(status_code=400, detail="Agent is not pending approval")
+        return {"detail": "Agent already approved", "agent_id": agent.id}
 
     agent.status = "online"
     agent.device_token_hash = None

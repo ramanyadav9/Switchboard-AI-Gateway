@@ -311,6 +311,15 @@ async def execute_tool(agent_id: str, tool: str, params: dict, timeout: float = 
         return {"success": False, "error": f"Tool call timed out after {timeout}s"}
 
 
+def _seconds_since(dt) -> float:
+    """Elapsed seconds since dt, tolerant of naive/aware datetimes from the DB."""
+    if dt is None:
+        return 1e9
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds()
+
+
 def is_agent_online(agent_id: str) -> bool:
     """Check if agent has polled recently."""
     db = SessionLocal()
@@ -318,10 +327,7 @@ def is_agent_online(agent_id: str) -> bool:
         agent = db.query(AgentConnection).filter(AgentConnection.id == agent_id).first()
         if not agent or agent.status == "pending":
             return False
-        if not agent.last_seen:
-            return False
-        elapsed = (datetime.now(timezone.utc) - agent.last_seen).total_seconds()
-        return elapsed < AGENT_ONLINE_THRESHOLD
+        return _seconds_since(agent.last_seen) < AGENT_ONLINE_THRESHOLD
     finally:
         db.close()
 
@@ -330,14 +336,13 @@ def get_online_agents(user_id: str) -> list[str]:
     """Get list of online agent IDs for a user."""
     db = SessionLocal()
     try:
-        threshold = datetime.now(timezone.utc)
         agents = db.query(AgentConnection).filter(
             AgentConnection.user_id == user_id,
             AgentConnection.status != "pending",
         ).all()
         return [
             a.id for a in agents
-            if a.last_seen and (threshold - a.last_seen).total_seconds() < AGENT_ONLINE_THRESHOLD
+            if _seconds_since(a.last_seen) < AGENT_ONLINE_THRESHOLD
         ]
     finally:
         db.close()

@@ -29,8 +29,9 @@ router = APIRouter()
 settings = get_settings()
 log = logging.getLogger("switchboard.agent")
 
-LONG_POLL_TIMEOUT = 30  # seconds
-AGENT_ONLINE_THRESHOLD = 15  # seconds — agent is "online" if polled within this
+LONG_POLL_TIMEOUT = 25  # seconds — how long a poll blocks waiting for work
+# Must be > LONG_POLL_TIMEOUT, else an agent mid-long-poll looks "offline"
+AGENT_ONLINE_THRESHOLD = 40  # seconds — agent is "online" if polled within this
 
 # In-memory tool call queue and pending futures
 # {agent_id: [{"request_id": str, "tool": str, "params": dict}]}
@@ -194,6 +195,7 @@ async def poll_for_work(
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
+        prev_status = agent.status
         agent.last_seen = datetime.now(timezone.utc)
         if agent.status == "pending":
             db.commit()
@@ -206,9 +208,11 @@ async def poll_for_work(
             agent.device_token_hash = hashed
             agent.status = "online"
             db.commit()
+            log.info(f"Agent {agent.name or agent.id} approved and online")
             return {"status": "approved", "device_token": device_token, "tool_calls": []}
         if agent.status != "online":
             agent.status = "online"
+            log.info(f"Agent {agent.name or agent.id} back online (was {prev_status})")
         db.commit()
     finally:
         db.close()
@@ -346,3 +350,26 @@ def get_online_agents(user_id: str) -> list[str]:
         ]
     finally:
         db.close()
+
+
+async def offline_sweeper():
+    """Background task: mark agents offline when they stop polling, and log transitions."""
+    while True:
+        try:
+            await asyncio.sleep(20)
+            db = SessionLocal()
+            try:
+                online = db.query(AgentConnection).filter(
+                    AgentConnection.status == "online",
+                ).all()
+                for agent in online:
+                    if _seconds_since(agent.last_seen) >= AGENT_ONLINE_THRESHOLD:
+                        agent.status = "offline"
+                        log.info(f"Agent {agent.name or agent.id} went offline (no poll for {int(_seconds_since(agent.last_seen))}s)")
+                db.commit()
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            log.exception("offline_sweeper error")

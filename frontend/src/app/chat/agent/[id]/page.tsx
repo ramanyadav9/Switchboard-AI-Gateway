@@ -8,6 +8,26 @@ import { useToast } from "@/components/toast";
 
 type ToolCall = { id?: string; name: string; arguments?: string; tool?: string; params?: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number };
 type Message = { id?: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string };
+type AgentInfo = { id: string; name: string; hostname?: string; os?: string; workspace: string; status: string; tools?: string[]; last_seen?: string };
+
+function agentRelTime(iso?: string): string {
+  if (!iso) return "never";
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function agentOsIcon(os?: string): string {
+  const l = (os || "").toLowerCase();
+  if (l.includes("darwin") || l.includes("mac")) return "laptop_mac";
+  if (l.includes("win")) return "desktop_windows";
+  return "computer";
+}
 
 function parseThinkTags(text: string) {
   const match = text.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
@@ -545,9 +565,10 @@ export default function AgentConversationPage() {
   const [showSkills, setShowSkills] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [skillsList, setSkillsList] = useState<{ id: string; name: string; content: string; category: string }[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<{id: string; name: string; workspace: string; status: string} | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
-  const [agentsList, setAgentsList] = useState<{id: string; name: string; workspace: string; status: string}[]>([]);
+  const [agentsList, setAgentsList] = useState<AgentInfo[]>([]);
+  const [showAgentPanel, setShowAgentPanel] = useState(true);
   const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
   const [showSlashCommands, setShowSlashCommands] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -556,13 +577,37 @@ export default function AgentConversationPage() {
   const promptApplied = useRef(false);
 
   function loadAgents() {
-    agentsApi.list().then((list: {id: string; name: string; workspace: string; status: string}[]) => {
-      setAgentsList(Array.isArray(list) ? list : []);
-      if (!selectedAgent) {
-        const online = (Array.isArray(list) ? list : []).filter((a: {status: string}) => a.status === "online");
-        if (online.length > 0) setSelectedAgent(online[0]);
-      }
+    agentsApi.list().then((list: AgentInfo[]) => {
+      const arr = Array.isArray(list) ? list : [];
+      setAgentsList(arr);
+      setSelectedAgent((cur) => {
+        if (cur) {
+          // Keep selection in sync with fresh status
+          const fresh = arr.find((a) => a.id === cur.id);
+          return fresh || cur;
+        }
+        const online = arr.filter((a) => a.status === "online");
+        return online.length > 0 ? online[0] : null;
+      });
     }).catch(() => {});
+  }
+
+  // Auto-refresh agent list every 5s
+  useEffect(() => {
+    loadAgents();
+    const t = setInterval(loadAgents, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function disconnectAgent(agentId: string) {
+    try {
+      await agentsApi.disconnect(agentId);
+      if (selectedAgent?.id === agentId) setSelectedAgent(null);
+      loadAgents();
+    } catch {
+      toast("Failed to disconnect agent", "error");
+    }
   }
 
   useEffect(() => {
@@ -993,8 +1038,11 @@ export default function AgentConversationPage() {
     );
   }
 
+  const onlineCount = agentsList.filter((a) => a.status === "online").length;
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full">
+    <div className="flex flex-col h-full flex-1 min-w-0">
       {/* Header with model selector + Agent Mode */}
       <div
         className="flex items-center justify-between px-4 py-2 shrink-0 gap-3"
@@ -1018,14 +1066,28 @@ export default function AgentConversationPage() {
             </span>
           )}
         </div>
-        <Link
-          href={`/chat/${id}`}
-          className="flex items-center gap-1 text-[12px] transition-colors hover:opacity-80"
-          style={{ color: "var(--fg-muted)" }}
-        >
-          <span className="material-symbols-outlined text-[14px]">arrow_back</span>
-          Chat
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href={`/chat/${id}`}
+            className="flex items-center gap-1 text-[12px] transition-colors hover:opacity-80"
+            style={{ color: "var(--fg-muted)" }}
+          >
+            <span className="material-symbols-outlined text-[14px]">arrow_back</span>
+            Chat
+          </Link>
+          <button
+            onClick={() => setShowAgentPanel(!showAgentPanel)}
+            className="flex items-center gap-1 text-[12px] px-2 py-1 rounded-md transition-colors hover:bg-white/5"
+            style={showAgentPanel ? { color: "#a855f7", background: "rgba(168,85,247,0.12)" } : { color: "var(--fg-muted)" }}
+            title="Toggle agents panel"
+          >
+            <span className="material-symbols-outlined text-[14px]">dns</span>
+            <span className="hidden md:inline">Agents</span>
+            {onlineCount > 0 && (
+              <span className="text-[10px] font-bold px-1.5 rounded-full" style={{ background: "var(--success)", color: "#fff" }}>{onlineCount}</span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -1371,6 +1433,88 @@ export default function AgentConversationPage() {
           </div>
         </div>
       </div>
+    </div>
+
+    {/* Right agent status panel */}
+    {showAgentPanel && (
+      <aside className="w-[280px] shrink-0 hidden lg:flex flex-col overflow-hidden" style={{ borderLeft: "1px solid var(--border)", background: "var(--surface)" }}>
+        <div className="flex items-center justify-between px-3 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px]" style={{ color: "#a855f7" }}>dns</span>
+            <span className="text-[13px] font-semibold">Agents</span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: "var(--bg-emphasis)", color: "var(--fg-muted)" }}>{agentsList.length}</span>
+          </div>
+          <button onClick={() => setShowAgentPanel(false)} className="hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
+            <span className="material-symbols-outlined text-[16px]">close</span>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          {agentsList.length === 0 && (
+            <div className="text-center py-8 px-3">
+              <span className="material-symbols-outlined text-[32px] mb-2" style={{ color: "var(--fg-muted)" }}>computer</span>
+              <p className="text-[12px]" style={{ color: "var(--fg-muted)" }}>No agents connected</p>
+              <Link href="/chat/agents" className="text-[11px] mt-2 inline-block" style={{ color: "var(--accent)" }}>Install an agent →</Link>
+            </div>
+          )}
+          {agentsList.map((agent) => {
+            const isSel = selectedAgent?.id === agent.id;
+            const dotColor = agent.status === "online" ? "var(--success)" : agent.status === "pending" ? "#eab308" : "var(--fg-muted)";
+            return (
+              <div key={agent.id} className="rounded-lg p-2.5 transition-colors" style={{ background: isSel ? "rgba(168,85,247,0.08)" : "var(--bg-muted)", border: `1px solid ${isSel ? "#a855f7" : "var(--border)"}` }}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: dotColor }} />
+                  <span className="material-symbols-outlined text-[14px] shrink-0" style={{ color: "var(--fg-muted)" }}>{agentOsIcon(agent.os)}</span>
+                  <span className="text-[13px] font-semibold truncate flex-1">{agent.name || agent.hostname || "Agent"}</span>
+                  {isSel && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: "#a855f7", color: "#fff" }}>ACTIVE</span>}
+                </div>
+                <div className="text-[10px] font-[family-name:var(--font-mono)] space-y-0.5 mb-2" style={{ color: "var(--fg-muted)" }}>
+                  <div className="truncate">{agent.os || "Unknown"} · {agent.workspace || "~"}</div>
+                  <div>
+                    {agent.tools && agent.tools.length > 0 && <span>{agent.tools.length} tools · </span>}
+                    <span style={{ textTransform: "capitalize", color: dotColor }}>{agent.status}</span>
+                    {agent.status !== "pending" && <span> · {agentRelTime(agent.last_seen)}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {agent.status === "pending" ? (
+                    <button
+                      onClick={async () => { try { await agentsApi.approve(agent.id); loadAgents(); toast("Agent approved", "success"); } catch { toast("Approve failed", "error"); } }}
+                      className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1 rounded transition-colors t-btn"
+                    >
+                      <span className="material-symbols-outlined text-[13px]">check</span> Approve
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setSelectedAgent(isSel ? null : agent)}
+                      disabled={agent.status !== "online"}
+                      className="flex-1 flex items-center justify-center gap-1 text-[11px] py-1 rounded transition-colors hover:bg-white/5 disabled:opacity-40"
+                      style={{ border: "1px solid var(--border)", color: isSel ? "#a855f7" : "var(--fg-secondary)" }}
+                    >
+                      <span className="material-symbols-outlined text-[13px]">{isSel ? "check_circle" : "bolt"}</span>
+                      {isSel ? "Active" : "Use"}
+                    </button>
+                  )}
+                  <Link href="/chat/agents" title="Terminal & Files" className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:bg-white/5" style={{ border: "1px solid var(--border)", color: "var(--fg-muted)" }}>
+                    <span className="material-symbols-outlined text-[13px]">terminal</span>
+                  </Link>
+                  <button onClick={() => disconnectAgent(agent.id)} title="Disconnect" className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:bg-white/5" style={{ border: "1px solid var(--border)", color: "var(--error)" }}>
+                    <span className="material-symbols-outlined text-[13px]">link_off</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-3 py-2 shrink-0" style={{ borderTop: "1px solid var(--border)" }}>
+          <Link href="/chat/agents" className="flex items-center justify-center gap-1.5 text-[11px] py-1.5 rounded transition-colors hover:bg-white/5 w-full" style={{ color: "var(--fg-secondary)" }}>
+            <span className="material-symbols-outlined text-[14px]">settings</span>
+            Manage agents
+          </Link>
+        </div>
+      </aside>
+    )}
     </div>
   );
 }

@@ -13,12 +13,15 @@ cfg = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     init_db()
     app.state.http_client = httpx.AsyncClient(
         limits=httpx.Limits(max_connections=500, max_keepalive_connections=50),
         timeout=httpx.Timeout(300.0, connect=5.0),
     )
+    sweeper_task = asyncio.create_task(agent_poll.offline_sweeper())
     yield
+    sweeper_task.cancel()
     await app.state.http_client.aclose()
 
 

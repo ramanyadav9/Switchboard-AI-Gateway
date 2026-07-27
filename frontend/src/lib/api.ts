@@ -103,7 +103,7 @@ export const translate = {
 
 export const userSettings = {
   get: () => apiFetch("/me/settings"),
-  update: (data: { display_name?: string; default_model?: string; default_temperature?: number; default_system_prompt?: string }) =>
+  update: (data: { display_name?: string; default_model?: string; default_temperature?: number; default_system_prompt?: string; cross_chat_memory?: boolean }) =>
     apiFetch("/me/settings", { method: "PATCH", body: JSON.stringify(data) }),
 };
 

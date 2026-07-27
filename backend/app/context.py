@@ -158,17 +158,18 @@ def build_prompt(
     db: Session,
     max_tokens: int | None = None,
     agent_tools: bool = False,
+    memory_scope: str = "this_chat",
 ) -> ChatContext:
     if max_tokens is None:
         max_tokens = int(_settings.MAX_MODEL_LEN * 0.75)
     budget = max_tokens
     was_truncated = False
 
-    # Scope memory recall to THIS conversation only. Flip to "all_chats" here when the
-    # user enables the (future) "let this chat see my other chats" toggle.
+    # memory_scope is "this_chat" by default; "all_chats" when the user has enabled the
+    # cross-chat memory toggle, letting this chat recall summaries from their other chats.
     rag_context, rag_sources = _fetch_rag_context(
         conversation.user_id, new_message, db,
-        conversation_id=conversation.id, scope="this_chat",
+        conversation_id=conversation.id, scope=memory_scope,
     )
 
     system_content = _build_system_prompt(conversation, rag_context, agent_tools)

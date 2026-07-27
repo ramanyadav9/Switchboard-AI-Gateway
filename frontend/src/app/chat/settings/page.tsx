@@ -404,6 +404,7 @@ export default function SettingsPage() {
   const [defaultModel, setDefaultModel] = useState("");
   const [defaultTemp, setDefaultTemp] = useState(0.7);
   const [defaultPrompt, setDefaultPrompt] = useState("");
+  const [crossChatMemory, setCrossChatMemory] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsSaving, setSettingsSaving] = useState(false);
 
@@ -436,11 +437,12 @@ export default function SettingsPage() {
       .catch(() => {});
 
     userSettings.get()
-      .then((s: { display_name?: string; default_model?: string; default_temperature?: number; default_system_prompt?: string }) => {
+      .then((s: { display_name?: string; default_model?: string; default_temperature?: number; default_system_prompt?: string; cross_chat_memory?: boolean }) => {
         if (s.display_name) setDisplayName(s.display_name);
         if (s.default_model) setDefaultModel(s.default_model);
         if (s.default_temperature !== undefined) setDefaultTemp(s.default_temperature);
         if (s.default_system_prompt) setDefaultPrompt(s.default_system_prompt);
+        setCrossChatMemory(!!s.cross_chat_memory);
       })
       .catch(() => toast("Failed to load settings", "error"))
       .finally(() => setSettingsLoading(false));
@@ -462,12 +464,26 @@ export default function SettingsPage() {
         default_model: defaultModel || undefined,
         default_temperature: defaultTemp,
         default_system_prompt: defaultPrompt || undefined,
+        cross_chat_memory: crossChatMemory,
       });
       toast("Settings saved", "success");
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : "Failed to save settings", "error");
     } finally {
       setSettingsSaving(false);
+    }
+  }
+
+  /* ---- cross-chat memory toggle (applies immediately) ---- */
+  async function toggleCrossChatMemory() {
+    const next = !crossChatMemory;
+    setCrossChatMemory(next);
+    try {
+      await userSettings.update({ cross_chat_memory: next });
+      toast(next ? "Cross-chat memory on" : "Cross-chat memory off", "success");
+    } catch {
+      setCrossChatMemory(!next); // revert on failure
+      toast("Failed to update memory setting", "error");
     }
   }
 
@@ -695,7 +711,47 @@ export default function SettingsPage() {
         </section>
 
         {/* ═══════════════════════════
-            Section 3 — AI Providers
+            Section 3 — Memory
+            ═══════════════════════════ */}
+        <section>
+          <div className="mb-4">
+            <h2 className="text-[16px] font-semibold flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px]" style={{ color: "var(--accent)" }}>psychology</span>
+              Memory
+            </h2>
+            <p className="text-[12px] mt-0.5" style={{ color: "var(--fg-muted)" }}>
+              How much your chats remember across conversations.
+            </p>
+          </div>
+
+          <div className="t-card rounded-lg p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-[14px] font-medium">Cross-chat memory</div>
+                <p className="text-[12px] mt-1 leading-relaxed" style={{ color: "var(--fg-secondary)" }}>
+                  Let a chat recall relevant summaries from your <b>other</b> conversations, so you don&rsquo;t
+                  have to repeat context. When off, each chat only remembers itself.
+                </p>
+              </div>
+              <button
+                onClick={toggleCrossChatMemory}
+                role="switch"
+                aria-checked={crossChatMemory}
+                className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none mt-0.5"
+                style={{ background: crossChatMemory ? "var(--accent)" : "var(--bg-emphasis)" }}
+                title={crossChatMemory ? "Turn off cross-chat memory" : "Turn on cross-chat memory"}
+              >
+                <span
+                  className="inline-block h-4 w-4 rounded-full shadow transform transition-transform duration-200 ease-in-out"
+                  style={{ background: "#fff", marginTop: 2, transform: crossChatMemory ? "translateX(18px)" : "translateX(2px)" }}
+                />
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════════
+            Section 4 — AI Providers
             ═══════════════════════════ */}
         <section>
           <div className="mb-4">

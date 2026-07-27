@@ -141,6 +141,8 @@ class UserSettings(Base):
     default_model: Mapped[str | None] = mapped_column(String, nullable=True)
     default_temperature: Mapped[float] = mapped_column(Float, default=0.7)
     default_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When true, a chat can recall relevant summaries from the user's OTHER chats.
+    cross_chat_memory: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 

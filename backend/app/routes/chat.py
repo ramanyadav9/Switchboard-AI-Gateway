@@ -20,7 +20,7 @@ from app.context import build_prompt, build_summary_messages, estimate_tokens, s
 from app.models import UserProvider
 from app.services.providers import resolve_provider
 from app.db import SessionLocal, get_db
-from app.models import ApiKey, ChatMessage, Conversation, User
+from app.models import ApiKey, ChatMessage, Conversation, User, UserSettings
 from app.ratelimit import rpm_limit_for
 from app.routes.auth import Caller, get_caller
 
@@ -165,7 +165,9 @@ async def chat_sse(
 
     # Build context
     has_agent = bool(body.agent_id)
-    ctx = build_prompt(conv, content, db, agent_tools=has_agent)
+    usettings = db.query(UserSettings).filter(UserSettings.user_id == user.id).first()
+    memory_scope = "all_chats" if (usettings and getattr(usettings, "cross_chat_memory", False)) else "this_chat"
+    ctx = build_prompt(conv, content, db, agent_tools=has_agent, memory_scope=memory_scope)
 
     http_client = request.app.state.http_client
 

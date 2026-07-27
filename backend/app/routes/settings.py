@@ -29,6 +29,7 @@ class SettingsResponse(BaseModel):
     default_model: str | None
     default_temperature: float
     default_system_prompt: str | None
+    cross_chat_memory: bool
 
 
 class SettingsUpdate(BaseModel):
@@ -36,6 +37,7 @@ class SettingsUpdate(BaseModel):
     default_model: str | None = None
     default_temperature: float | None = None
     default_system_prompt: str | None = None
+    cross_chat_memory: bool | None = None
 
 
 @router.get("/settings", response_model=SettingsResponse)
@@ -50,12 +52,14 @@ def get_settings_route(
             default_model=None,
             default_temperature=0.7,
             default_system_prompt=None,
+            cross_chat_memory=False,
         )
     return SettingsResponse(
         display_name=s.display_name,
         default_model=s.default_model,
         default_temperature=s.default_temperature,
         default_system_prompt=s.default_system_prompt,
+        cross_chat_memory=bool(getattr(s, "cross_chat_memory", False)),
     )
 
 
@@ -77,6 +81,8 @@ def update_settings(
         s.default_temperature = body.default_temperature
     if body.default_system_prompt is not None:
         s.default_system_prompt = body.default_system_prompt
+    if body.cross_chat_memory is not None:
+        s.cross_chat_memory = body.cross_chat_memory
     db.commit()
     return {"detail": "Updated"}
 

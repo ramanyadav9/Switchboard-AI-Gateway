@@ -61,6 +61,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [usageData, setUsageData] = useState<{ requests_today: number; tokens_today: number } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const RPM_LIMIT = 50;
@@ -117,15 +119,32 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     }
   }
 
-  async function handleDelete(id: string, e: React.MouseEvent) {
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !deleting) setDeleteTarget(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteTarget, deleting]);
+
+  function requestDelete(id: string, title: string, e: React.MouseEvent) {
     e.stopPropagation();
     e.preventDefault();
+    setDeleteTarget({ id, title });
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget || deleting) return;
+    const { id } = deleteTarget;
+    setDeleting(true);
     try {
       await conversations.delete(id);
       loadConversations();
       if (pathname === `/chat/${id}` || pathname === `/chat/agent/${id}`) router.push("/chat");
+      setDeleteTarget(null);
     } catch {
       toast("Failed to delete conversation", "error");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -247,9 +266,10 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                     </div>
                   </div>
                   <button
-                    onClick={(e) => handleDelete(conv.id, e)}
+                    onClick={(e) => requestDelete(conv.id, conv.title || "New conversation", e)}
                     className="opacity-0 group-hover:opacity-100 hover:text-[#ffb4ab] transition-all shrink-0"
                     style={{ color: "var(--fg-muted)" }}
+                    title="Delete chat"
                   >
                     <span className="material-symbols-outlined text-[14px]">delete</span>
                   </button>
@@ -373,6 +393,55 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           children
         )}
       </main>
+
+      {/* Delete confirmation */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-fade-in"
+          style={{ background: "rgba(0,0,0,0.6)" }}
+          onClick={() => !deleting && setDeleteTarget(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-[380px] rounded-xl p-5"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 24px 60px -20px rgba(0,0,0,0.7)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: "var(--error)" }}>delete</span>
+              <div className="min-w-0">
+                <h2 className="text-[15px] font-semibold" style={{ color: "var(--fg)" }}>Delete chat?</h2>
+                <p className="text-[13px] mt-1 leading-relaxed" style={{ color: "var(--fg-secondary)" }}>
+                  <span className="font-medium" style={{ color: "var(--fg)" }}>&ldquo;{deleteTarget.title}&rdquo;</span> and its messages will be permanently removed. This can&rsquo;t be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="px-3.5 py-2 rounded-lg text-[13px] font-medium transition-colors disabled:opacity-50"
+                style={{ border: "1px solid var(--border)", color: "var(--fg-secondary)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                autoFocus
+                className="px-3.5 py-2 rounded-lg text-[13px] font-medium text-white transition-opacity disabled:opacity-60 inline-flex items-center gap-2"
+                style={{ background: "var(--error)" }}
+              >
+                {deleting && (
+                  <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                )}
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -574,6 +574,7 @@ export default function AgentConversationPage() {
   const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
   const [showSlashCommands, setShowSlashCommands] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
+  const [slashSelected, setSlashSelected] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const promptApplied = useRef(false);
@@ -1028,6 +1029,19 @@ export default function AgentConversationPage() {
     }
   }
 
+  // Commands matching the current filter (prefix match ranked first, then substring)
+  const filteredSlash = SLASH_COMMANDS.filter(c => c.name.includes(slashFilter))
+    .sort((a, b) => Number(b.name.startsWith(slashFilter)) - Number(a.name.startsWith(slashFilter)));
+
+  // Tab-complete: fill the input with the highlighted command name (doesn't run it)
+  function completeSlash() {
+    const cmd = filteredSlash[slashSelected] || filteredSlash[0];
+    if (!cmd) return;
+    setInput(`/${cmd.name} `);
+    setSlashFilter(cmd.name);
+    setSlashSelected(0);
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ color: "var(--fg-muted)" }}>
@@ -1282,16 +1296,23 @@ export default function AgentConversationPage() {
           )}
 
           {/* Slash command palette */}
-          {showSlashCommands && (
+          {showSlashCommands && filteredSlash.length > 0 && (
             <div className="mb-2 rounded-lg border overflow-hidden max-h-[300px] overflow-y-auto" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
-              {SLASH_COMMANDS.filter(c => c.name.includes(slashFilter)).map(cmd => (
-                <button key={cmd.name} onClick={() => handleSlashCommand(cmd.name)}
-                  className="w-full flex items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-white/5">
+              {filteredSlash.map((cmd, i) => (
+                <button key={cmd.name}
+                  ref={(el) => { if (i === slashSelected) el?.scrollIntoView({ block: "nearest" }); }}
+                  onClick={() => handleSlashCommand(cmd.name)}
+                  onMouseEnter={() => setSlashSelected(i)}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-left transition-colors"
+                  style={{ background: i === slashSelected ? "var(--accent-subtle)" : "transparent" }}>
                   <span className="material-symbols-outlined text-[16px]" style={{ color: "var(--accent)" }}>{cmd.icon}</span>
                   <div>
                     <div className="text-[13px] font-medium font-[family-name:var(--font-mono)]" style={{ color: "var(--fg)" }}>/{cmd.name}</div>
                     <div className="text-[11px]" style={{ color: "var(--fg-muted)" }}>{cmd.description}</div>
                   </div>
+                  {i === slashSelected && (
+                    <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)", border: "1px solid var(--border)" }}>tab</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -1305,9 +1326,11 @@ export default function AgentConversationPage() {
                 onChange={(e) => {
                   const val = e.target.value;
                   setInput(val);
-                  if (val.startsWith("/")) {
+                  // Show the palette only while typing a single command token (no space yet)
+                  if (val.startsWith("/") && !val.includes(" ")) {
                     setShowSlashCommands(true);
                     setSlashFilter(val.slice(1).toLowerCase());
+                    setSlashSelected(0);
                   } else {
                     setShowSlashCommands(false);
                   }
@@ -1315,6 +1338,29 @@ export default function AgentConversationPage() {
                   else if (showSkills && !val.includes("/")) setShowSkills(false);
                 }}
                 onKeyDown={(e) => {
+                  // Slash palette keyboard navigation (arrows / tab / enter)
+                  if (showSlashCommands && filteredSlash.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setSlashSelected((i) => (i + 1) % filteredSlash.length);
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setSlashSelected((i) => (i - 1 + filteredSlash.length) % filteredSlash.length);
+                      return;
+                    }
+                    if (e.key === "Tab") {
+                      e.preventDefault();
+                      completeSlash();
+                      return;
+                    }
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSlashCommand((filteredSlash[slashSelected] || filteredSlash[0]).name);
+                      return;
+                    }
+                  }
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     chatMode === "research" ? sendResearch() : chatMode === "search" ? sendWithSearch() : send();

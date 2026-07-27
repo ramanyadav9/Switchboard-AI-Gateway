@@ -1319,7 +1319,7 @@ export default function AgentConversationPage() {
           )}
 
           {/* Input box */}
-          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+          <div className="rounded-xl" style={{ border: "1px solid var(--border)" }}>
             <div className="flex items-end gap-2 px-3 py-2">
               <textarea
                 value={input}
@@ -1396,7 +1396,7 @@ export default function AgentConversationPage() {
             </div>
 
             {/* Bottom tool bar */}
-            <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderTop: "1px solid var(--border)", background: "var(--bg-muted)" }}>
+            <div className="flex items-center gap-1 px-2 py-1.5 rounded-b-xl" style={{ borderTop: "1px solid var(--border)", background: "var(--bg-muted)" }}>
               {/* + button */}
               <button
                 onClick={() => setShowTools(!showTools)}
@@ -1451,23 +1451,25 @@ export default function AgentConversationPage() {
                   <span className="hidden sm:inline">{selectedAgent ? selectedAgent.name : "Agent"}</span>
                 </button>
                 {showAgentPicker && (
-                  <div className="absolute bottom-full left-0 mb-1 rounded-lg border overflow-hidden min-w-[220px] z-50" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
-                    <button onClick={() => { setSelectedAgent(null); setShowAgentPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5" style={{ color: "var(--fg-secondary)" }}>
+                  <div className="absolute bottom-full left-0 mb-1 rounded-lg border min-w-[220px] max-w-[320px] max-h-[300px] flex flex-col z-50 shadow-xl" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+                    <button onClick={() => { setSelectedAgent(null); setShowAgentPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5 shrink-0 rounded-t-lg" style={{ color: "var(--fg-secondary)", borderBottom: "1px solid var(--border)" }}>
                       <span className="material-symbols-outlined text-[14px]">close</span> No agent
                     </button>
-                    {agentsList.filter(a => a.status === "online").length === 0 && (
-                      <div className="px-3 py-2 text-[11px]" style={{ color: "var(--fg-muted)" }}>
-                        No agents online
-                      </div>
-                    )}
-                    {agentsList.filter(a => a.status === "online").map(agent => (
-                      <button key={agent.id} onClick={() => { setSelectedAgent(agent); setShowAgentPicker(false); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5"
-                        style={{ color: selectedAgent?.id === agent.id ? "#a855f7" : "var(--fg-secondary)" }}>
-                        <span className="w-2 h-2 rounded-full" style={{ background: "var(--success)" }} />
-                        {agent.name} <span style={{ color: "var(--fg-muted)" }}>&middot; {agent.workspace}</span>
-                      </button>
-                    ))}
+                    <div className="overflow-y-auto">
+                      {agentsList.filter(a => a.status === "online").length === 0 && (
+                        <div className="px-3 py-2 text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                          No agents online
+                        </div>
+                      )}
+                      {agentsList.filter(a => a.status === "online").map(agent => (
+                        <button key={agent.id} onClick={() => { setSelectedAgent(agent); setShowAgentPicker(false); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/5"
+                          style={{ color: selectedAgent?.id === agent.id ? "#a855f7" : "var(--fg-secondary)" }}>
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--success)" }} />
+                          <span className="truncate">{agent.name} <span style={{ color: "var(--fg-muted)" }}>&middot; {agent.workspace}</span></span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

@@ -1127,7 +1127,7 @@ export default function ConversationPage() {
               {/* Agent mode button — switches this conversation to agent mode */}
               <button
                 onClick={async () => {
-                  try { await conversations.update(id, { mode: "agent" } as never); } catch {}
+                  try { await conversations.update(id, { mode: "agent" }); } catch {}
                   router.push(`/chat/agent/${id}`);
                 }}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"

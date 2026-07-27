@@ -171,14 +171,25 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           </button>
           <button
             onClick={async () => {
+              // If viewing an existing plain chat, switch THAT conversation to
+              // agent mode (keeps its history). Otherwise start a fresh agent session.
+              const m = pathname.match(/^\/chat\/([^/]+)$/);
+              const reserved = ["agents", "settings", "skills", "research"];
+              const currentId = m && !reserved.includes(m[1]) ? m[1] : null;
               try {
-                const conv = await conversations.create({ mode: "agent" });
-                router.push(`/chat/agent/${conv.id}`);
-              } catch { toast("Failed to create agent session", "error"); }
+                if (currentId) {
+                  await conversations.update(currentId, { mode: "agent" });
+                  loadConversations();
+                  router.push(`/chat/agent/${currentId}`);
+                } else {
+                  const conv = await conversations.create({ mode: "agent" });
+                  router.push(`/chat/agent/${conv.id}`);
+                }
+              } catch { toast("Failed to switch to agent mode", "error"); }
             }}
             className="flex items-center justify-center gap-1.5 px-3 py-2 rounded text-[13px] font-medium transition-colors hover:bg-white/5"
             style={{ border: "1px solid var(--border)", color: "var(--fg-secondary)" }}
-            title="New Agent Session"
+            title="Switch the current chat to agent mode (or start a new agent session)"
           >
             <span className="material-symbols-outlined text-[16px]">terminal</span>
             Agent

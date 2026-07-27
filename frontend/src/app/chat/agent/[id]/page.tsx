@@ -461,9 +461,11 @@ function MessageContent({ text }: { text: string }) {
 function ModelSelector({
   value,
   onChange,
+  openSignal = 0,
 }: {
   value: string;
   onChange: (model: string) => void;
+  openSignal?: number;
 }) {
   const [modelList, setModelList] = useState<{ id: string }[]>([]);
   const [open, setOpen] = useState(false);
@@ -476,6 +478,11 @@ function ModelSelector({
       })
       .catch(() => {});
   }, []);
+
+  // Allow the page (e.g. the /model slash command) to open this dropdown.
+  useEffect(() => {
+    if (openSignal > 0) setOpen(true);
+  }, [openSignal]);
 
   if (modelList.length === 0) return null;
 
@@ -576,6 +583,7 @@ export default function AgentConversationPage() {
   const [showSlashCommands, setShowSlashCommands] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelected, setSlashSelected] = useState(0);
+  const [modelMenuSignal, setModelMenuSignal] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const promptApplied = useRef(false);
@@ -976,6 +984,7 @@ export default function AgentConversationPage() {
         setInput("Please summarize our conversation so far in a few key points.");
         break;
       case "model":
+        setModelMenuSignal((n) => n + 1);
         break;
       case "agent":
         loadAgents();
@@ -1002,7 +1011,11 @@ export default function AgentConversationPage() {
         break;
       }
       case "help":
-        toast("Type / to see all commands", "info");
+        // Re-open the command palette listing every command.
+        setInput("/");
+        setSlashFilter("");
+        setSlashSelected(0);
+        setShowSlashCommands(true);
         break;
       case "cost": {
         const tokens = messages.reduce((sum, m) => sum + (m.content?.length || 0) / 3, 0);
@@ -1066,7 +1079,7 @@ export default function AgentConversationPage() {
         style={{ borderBottom: "1px solid var(--border)" }}
       >
         <div className="flex items-center gap-3">
-          <ModelSelector value={selectedModel} onChange={setSelectedModel} />
+          <ModelSelector value={selectedModel} onChange={setSelectedModel} openSignal={modelMenuSignal} />
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold"
             style={{ background: "rgba(168,85,247,0.12)", color: "#a855f7" }}

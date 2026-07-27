@@ -2,10 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { conversations } from "@/lib/api";
+import { conversations, models as modelsApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
-
-const MODEL_NAME = "Qwen3-14B";
 
 const PRESETS = [
   { icon: "code", label: "Write code", jack: "DEV", prompt: "Help me write a Python script that " },
@@ -20,11 +18,19 @@ export default function ChatPage() {
   const [creating, setCreating] = useState(false);
   const [hot, setHot] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 60);
+    modelsApi.list()
+      .then((res: { data?: { id: string }[] }) => setModels((res.data || []).map((m) => m.id)))
+      .catch(() => {});
     return () => clearTimeout(t);
   }, []);
+
+  const modelCount = models.length;
+  const modelLabel = modelCount === 1 ? models[0] : "Local models";
+  const modelTag = modelCount > 0 ? `${modelCount} LIVE` : "LIVE";
 
   async function openLine(prompt?: string) {
     if (creating) return;
@@ -61,7 +67,7 @@ export default function ChatPage() {
           <div className="sb-eyebrow">OPERATOR CONSOLE · POSITION 01</div>
           <h1 className="sb-title">Open a line.</h1>
           <p className="sb-sub">
-            Patch yourself through to <b>{MODEL_NAME}</b> running on your own hardware.
+            Patch yourself through to <b>your own models</b> running on your hardware.
             Every message stays on your wires — nothing leaves the box.
           </p>
 
@@ -87,12 +93,23 @@ export default function ChatPage() {
             <div className="sb-jack sb-jack-model">
               <span className="sb-port" />
               <div className="sb-jack-meta sb-jack-meta-r">
-                <span className="sb-jack-name">{MODEL_NAME}</span>
-                <span className="sb-jack-tag"><span className="sb-lamp sb-lamp-amber" />LIVE</span>
+                <span className="sb-jack-name">{modelLabel}</span>
+                <span className="sb-jack-tag"><span className="sb-lamp sb-lamp-amber" />{modelTag}</span>
               </div>
               <span className="sb-jack-icon"><span className="material-symbols-outlined">memory</span></span>
             </div>
           </div>
+
+          {/* ── Available lines (models) ── */}
+          {modelCount > 0 && (
+            <div className="sb-models" title={`${modelCount} model${modelCount > 1 ? "s" : ""} available`}>
+              <span className="sb-models-label">LINES</span>
+              {models.slice(0, 6).map((m) => (
+                <span key={m} className="sb-model-chip">{m}</span>
+              ))}
+              {modelCount > 6 && <span className="sb-model-chip sb-model-more">+{modelCount - 6}</span>}
+            </div>
+          )}
 
           {/* ── Actions ── */}
           <div className="sb-actions">
@@ -222,8 +239,17 @@ const sbStyles = `
 .sb-bay-hot .sb-port { border-color: var(--signal); box-shadow: inset 0 1px 2px rgba(0,0,0,0.5), 0 0 8px var(--signal-soft); }
 .sb-cable-vert { display: none; }
 
+/* available lines (models) */
+.sb-models { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.sb-models-label { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .18em; color: var(--fg-muted); margin-right: 2px; }
+.sb-model-chip {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-secondary);
+  padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg);
+}
+.sb-model-more { color: var(--fg-muted); }
+
 /* actions */
-.sb-actions { margin-top: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.sb-actions { margin-top: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .sb-connect {
   display: inline-flex; align-items: center; gap: 9px; padding: 0 20px; height: 46px;
   border-radius: 11px; font-size: 14px; font-weight: 600; color: #fff;

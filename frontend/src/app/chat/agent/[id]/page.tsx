@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi } from "@/lib/api";
+import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi, usage as usageApi } from "@/lib/api";
 import { copyToClipboard } from "@/lib/clipboard";
+
+// Daily request budget — kept in sync with the sidebar usage ring (layout.tsx).
+const RPM_LIMIT = 50;
 import { useToast } from "@/components/toast";
 
 type ToolCall = { id?: string; name: string; arguments?: string; tool?: string; params?: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number };
@@ -1018,8 +1021,15 @@ export default function AgentConversationPage() {
         setShowSlashCommands(true);
         break;
       case "cost": {
-        const tokens = messages.reduce((sum, m) => sum + (m.content?.length || 0) / 3, 0);
-        toast(`~${Math.round(tokens)} tokens used in this conversation`, "info");
+        const tokens = Math.round(messages.reduce((sum, m) => sum + (m.content?.length || 0) / 3, 0));
+        const modelName = selectedModel || model || "model";
+        usageApi.stats(1)
+          .then((u: { requests_today?: number }) => {
+            const used = u?.requests_today ?? 0;
+            const remainPct = Math.max(0, Math.round((1 - used / RPM_LIMIT) * 100));
+            toast(`${modelName} · ~${tokens} tokens this chat · ${used}/${RPM_LIMIT} requests today · ${remainPct}% of daily limit left`, "info");
+          })
+          .catch(() => toast(`${modelName} · ~${tokens} tokens this chat`, "info"));
         break;
       }
       case "undo":

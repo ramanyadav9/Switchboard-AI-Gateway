@@ -99,7 +99,8 @@ def _maybe_summarize(conversation_id: str, http_client):
 
                 try:
                     from app.services.rag import index_content
-                    index_content(db, conv.user_id, "chat_summary", conversation_id, conv.title or "Chat", summary)
+                    index_content(db, conv.user_id, "chat_summary", conversation_id, conv.title or "Chat", summary,
+                                  metadata={"conversation_id": conversation_id})
                 except Exception:
                     pass
     except Exception:

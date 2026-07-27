@@ -84,10 +84,28 @@ def _build_system_prompt(
     return base
 
 
-def _fetch_rag_context(user_id: str, query: str, db: Session) -> tuple[str, list[dict]]:
+def _fetch_rag_context(
+    user_id: str,
+    query: str,
+    db: Session,
+    conversation_id: str | None = None,
+    scope: str = "this_chat",
+) -> tuple[str, list[dict]]:
+    """Retrieve semantic memory to inject.
+
+    scope="this_chat" (default) keeps a chat's recall to itself — no other conversation's
+    content leaks in. scope="all_chats" is the future opt-in "let this chat see my other
+    chats" toggle. The current conversation's own rolling summary is skipped here because
+    it is already injected separately (see build_prompt), avoiding a duplicate.
+    """
     try:
         from app.services.rag import retrieve
-        results = retrieve(db, user_id, query, top_k=3)
+        results = retrieve(db, user_id, query, top_k=3,
+                           conversation_id=conversation_id, scope=scope)
+        results = [
+            r for r in results
+            if not (r.get("source_type") == "chat_summary" and r.get("source_id") == conversation_id)
+        ]
         if not results:
             return "", []
         context = "\n\n".join(
@@ -146,8 +164,11 @@ def build_prompt(
     budget = max_tokens
     was_truncated = False
 
+    # Scope memory recall to THIS conversation only. Flip to "all_chats" here when the
+    # user enables the (future) "let this chat see my other chats" toggle.
     rag_context, rag_sources = _fetch_rag_context(
-        conversation.user_id, new_message, db
+        conversation.user_id, new_message, db,
+        conversation_id=conversation.id, scope="this_chat",
     )
 
     system_content = _build_system_prompt(conversation, rag_context, agent_tools)

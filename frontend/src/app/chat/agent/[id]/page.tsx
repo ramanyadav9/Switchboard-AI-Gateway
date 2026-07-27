@@ -327,6 +327,62 @@ function SearchIndicator({ phase, results }: { phase: string; results: { title: 
   );
 }
 
+type DiffLine = { type: "add" | "del" | "ctx"; text: string };
+
+// LCS line diff (old → new). Bounded so huge writes fall back to add-only.
+function diffLines(oldStr: string, newStr: string): DiffLine[] {
+  const a = oldStr.length ? oldStr.split("\n") : [];
+  const b = newStr.length ? newStr.split("\n") : [];
+  const m = a.length, n = b.length;
+  if (m === 0) return b.map((t) => ({ type: "add" as const, text: t }));
+  if (n === 0) return a.map((t) => ({ type: "del" as const, text: t }));
+  if (m * n > 250_000) {
+    // Too big for LCS — show removed then added rather than a true interleaving.
+    return [...a.map((t) => ({ type: "del" as const, text: t })), ...b.map((t) => ({ type: "add" as const, text: t }))];
+  }
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out: DiffLine[] = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { out.push({ type: "ctx", text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: "del", text: a[i] }); i++; }
+    else { out.push({ type: "add", text: b[j] }); j++; }
+  }
+  while (i < m) out.push({ type: "del", text: a[i++] });
+  while (j < n) out.push({ type: "add", text: b[j++] });
+  return out;
+}
+
+const DIFF_MAX_LINES = 200;
+
+function DiffView({ diff }: { diff: DiffLine[] }) {
+  const shown = diff.slice(0, DIFF_MAX_LINES);
+  const hidden = diff.length - shown.length;
+  return (
+    <div className="rounded overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+      {shown.map((d, i) => {
+        const bg = d.type === "add" ? "rgba(34,197,94,0.12)" : d.type === "del" ? "rgba(239,68,68,0.12)" : "transparent";
+        const fg = d.type === "add" ? "var(--success)" : d.type === "del" ? "var(--error)" : "var(--fg-muted)";
+        const sign = d.type === "add" ? "+" : d.type === "del" ? "-" : " ";
+        return (
+          <div key={i} className="flex" style={{ background: bg }}>
+            <span className="select-none px-2 shrink-0" style={{ color: fg, opacity: 0.7 }}>{sign}</span>
+            <span className="whitespace-pre-wrap break-all pr-2" style={{ color: d.type === "ctx" ? "var(--code-fg)" : fg }}>{d.text || " "}</span>
+          </div>
+        );
+      })}
+      {hidden > 0 && (
+        <div className="px-2 py-1 text-[11px]" style={{ color: "var(--fg-muted)", background: "var(--bg-muted)" }}>
+          … {hidden} more line{hidden > 1 ? "s" : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ToolCallBlock({ tool, params, result, error, success, duration, isLive }: {
   tool: string; params: Record<string, string>;
   result?: unknown; error?: string; success?: boolean; duration?: number; isLive?: boolean;
@@ -369,6 +425,16 @@ function ToolCallBlock({ tool, params, result, error, success, duration, isLive 
     : (tool === "read_file" || tool === "write_file" || tool === "edit_file" || tool === "grep" || tool === "glob") && params.path ? String(params.path)
     : tool === "ls" ? (params.path || ".") : "";
 
+  // File-change diff (like OpenCode / Claude Code): edit_file has old→new, write_file is all-new.
+  const isEdit = tool === "edit_file";
+  const isWrite = tool === "write_file";
+  const diffOld = isEdit ? String(params.old_text ?? "") : "";
+  const diffNew = isEdit ? String(params.new_text ?? "") : isWrite ? String(params.content ?? "") : "";
+  const showDiff = (isEdit || isWrite) && (diffOld.length > 0 || diffNew.length > 0);
+  const diff = showDiff ? diffLines(diffOld, diffNew) : [];
+  const added = diff.reduce((n, d) => n + (d.type === "add" ? 1 : 0), 0);
+  const removed = diff.reduce((n, d) => n + (d.type === "del" ? 1 : 0), 0);
+
   return (
     <div className="my-1.5 rounded-lg overflow-hidden" style={{ border: `1px solid ${isPending ? "var(--accent)" : "var(--border)"}` }}>
       <button onClick={() => setOpen(!open)}
@@ -386,6 +452,12 @@ function ToolCallBlock({ tool, params, result, error, success, duration, isLive 
           <span className="font-[family-name:var(--font-mono)] truncate flex-1 text-left" style={{ color: "var(--fg-muted)" }}>{summary}</span>
         )}
         <span className="ml-auto flex items-center gap-2 shrink-0">
+          {showDiff && (added > 0 || removed > 0) && (
+            <span className="font-[family-name:var(--font-mono)] text-[10px] flex items-center gap-1">
+              {added > 0 && <span style={{ color: "var(--success)" }}>+{added}</span>}
+              {removed > 0 && <span style={{ color: "var(--error)" }}>-{removed}</span>}
+            </span>
+          )}
           {duration != null && duration > 0 && (
             <span className="font-[family-name:var(--font-mono)] text-[10px] px-1.5 py-0.5 rounded" style={{ color: "var(--fg-muted)", background: "var(--bg)" }}>
               {duration > 1000 ? `${(duration/1000).toFixed(1)}s` : `${duration}ms`}
@@ -403,6 +475,8 @@ function ToolCallBlock({ tool, params, result, error, success, duration, isLive 
               <span className="material-symbols-outlined text-[13px] mt-0.5 shrink-0" style={{ color: "var(--error)" }}>error</span>
               <pre className="whitespace-pre-wrap" style={{ color: "var(--error)" }}>{error}</pre>
             </div>
+          ) : showDiff ? (
+            <DiffView diff={diff} />
           ) : result ? (
             <pre className="whitespace-pre-wrap">{formatResult(result)}</pre>
           ) : (

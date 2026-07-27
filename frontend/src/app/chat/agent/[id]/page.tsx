@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi } from "@/lib/api";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useToast } from "@/components/toast";
 
 type ToolCall = { id?: string; name: string; arguments?: string; tool?: string; params?: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number };
@@ -88,7 +89,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={() => {
-        navigator.clipboard.writeText(text);
+        copyToClipboard(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       }}

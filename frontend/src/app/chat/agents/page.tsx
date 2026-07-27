@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { agents, keys } from "@/lib/api";
 import { useToast } from "@/components/toast";
+import { copyToClipboard } from "@/lib/clipboard";
 
 type Agent = {
   id: string;
@@ -296,10 +297,14 @@ export default function AgentsPage() {
   }
 
   function copyText(text: string, setter: (v: boolean) => void) {
-    navigator.clipboard.writeText(text).then(() => {
-      setter(true);
-      setTimeout(() => setter(false), 2000);
-    }).catch(() => toast("Failed to copy", "error"));
+    copyToClipboard(text).then((ok) => {
+      if (ok) {
+        setter(true);
+        setTimeout(() => setter(false), 2000);
+      } else {
+        toast("Failed to copy", "error");
+      }
+    });
   }
 
   const pendingAgents = agentList.filter((a) => a.status === "pending");

@@ -81,8 +81,11 @@ class AgentConnection:
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
         self.workspace = str(Path(workspace).resolve())
-        self.name = name or platform.node()
-        self.fingerprint = get_fingerprint()
+        # Default name includes the folder so multiple agents on one machine
+        # are distinguishable in the list (e.g. "my-host (project)").
+        self.name = name or f"{platform.node()} ({Path(self.workspace).name})"
+        # Fingerprint includes the workspace → each folder is its own agent.
+        self.fingerprint = get_fingerprint(self.workspace)
         self.device_token = self._load_device_token()
         self.agent_id = None
         self._running = True
@@ -91,8 +94,14 @@ class AgentConnection:
         return Path.home() / ".switchboard" / "config.json"
 
     def _load_device_token(self) -> str | None:
+        # Tokens are keyed by fingerprint so multiple folders (= multiple agents)
+        # on the same machine don't clobber each other's device token.
         try:
             data = json.loads(self._config_path().read_text())
+            tokens = data.get("device_tokens") or {}
+            if self.fingerprint in tokens:
+                return tokens[self.fingerprint]
+            # Legacy single-token config (pre per-folder agents)
             return data.get("device_token")
         except Exception:
             return None
@@ -105,7 +114,9 @@ class AgentConnection:
             config = json.loads(self._config_path().read_text())
         except Exception:
             pass
-        config["device_token"] = token
+        tokens = config.get("device_tokens") or {}
+        tokens[self.fingerprint] = token
+        config["device_tokens"] = tokens
         config["server_url"] = self.server_url
         config["api_key"] = self.api_key
         config["agent_name"] = self.name

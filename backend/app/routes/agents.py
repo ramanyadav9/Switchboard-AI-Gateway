@@ -159,18 +159,27 @@ async def exec_tool(
 
     start = time.time()
     try:
-        result = await execute_tool(agent_id, body.tool, body.params)
+        envelope = await execute_tool(agent_id, body.tool, body.params)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
     duration_ms = int((time.time() - start) * 1000)
 
-    success = result.get("success", True) if isinstance(result, dict) else True
-    error = result.get("error") if isinstance(result, dict) else None
+    # execute_tool returns an envelope {success, result, error, duration_ms}.
+    # Unwrap it so the REST response's `result` is the actual tool output
+    # (e.g. {"output": ..., "exit_code": ...}), not a doubly-nested envelope.
+    if isinstance(envelope, dict) and "success" in envelope and "result" in envelope:
+        success = envelope.get("success", True)
+        error = envelope.get("error")
+        inner = envelope.get("result")
+        if inner is None and error:
+            inner = {"error": error}
+    else:
+        success, error, inner = True, None, envelope
 
     return ToolExecResponse(
         success=success,
-        result=result,
+        result=inner,
         error=error,
         duration_ms=duration_ms,
     )

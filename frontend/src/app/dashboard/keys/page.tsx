@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { keys } from "@/lib/api";
 import { useToast } from "@/components/toast";
+import { copyToClipboard } from "@/lib/clipboard";
 
 type SnippetMode = "chat" | "stt" | "realtime";
 type SnippetLang = "curl" | "python" | "node";
@@ -156,7 +157,7 @@ ws.on("message", (data) => {
   const code = snippets[mode][lang];
 
   function copy() {
-    navigator.clipboard.writeText(code);
+    copyToClipboard(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -254,7 +255,7 @@ export default function KeysPage() {
 
   function copyKey() {
     if (!createdKey) return;
-    navigator.clipboard.writeText(createdKey);
+    copyToClipboard(createdKey);
     setKeyCopied(true);
     setTimeout(() => setKeyCopied(false), 2000);
   }

@@ -155,7 +155,15 @@ export const agents = {
   list: () => apiFetch("/me/agents"),
   get: (id: string) => apiFetch(`/me/agents/${id}`),
   approve: (id: string) => apiFetch(`/me/agents/${id}/approve`, { method: "POST" }),
-  exec: (id: string, tool: string, params: object) =>
-    apiFetch(`/me/agents/${id}/exec`, { method: "POST", body: JSON.stringify({ tool, params }) }),
+  // Returns the tool's actual output (e.g. {output, exit_code} / {entries} / {content}).
+  // Throws on tool failure so callers' catch blocks surface the error.
+  exec: async (id: string, tool: string, params: object) => {
+    const res = await apiFetch(`/me/agents/${id}/exec`, { method: "POST", body: JSON.stringify({ tool, params }) });
+    if (res && typeof res === "object") {
+      if (res.success === false) throw new Error(res.error || `${tool} failed`);
+      if ("result" in res) return res.result ?? {};
+    }
+    return res;
+  },
   disconnect: (id: string) => apiFetch(`/me/agents/${id}`, { method: "DELETE" }),
 };

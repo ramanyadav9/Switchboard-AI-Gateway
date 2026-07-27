@@ -590,6 +590,21 @@ export default function AgentConversationPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const promptApplied = useRef(false);
+  const stopRef = useRef<() => void>(() => {});
+  const streamingRef = useRef(false);
+  streamingRef.current = streaming;
+
+  // ESC anywhere interrupts a running agent turn.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && streamingRef.current) {
+        e.preventDefault();
+        stopRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function loadAgents() {
     agentsApi.list().then((list: AgentInfo[]) => {
@@ -814,6 +829,7 @@ export default function AgentConversationPage() {
     setStreamThinking("");
     setStreaming(false);
   }
+  stopRef.current = stop;
 
   async function sendResearch() {
     if (!input.trim() || streaming) return;
@@ -1501,7 +1517,9 @@ export default function AgentConversationPage() {
               <div className="flex-1" />
               <span className="text-[10px] font-[family-name:var(--font-mono)] hidden sm:block" style={{ color: "var(--fg-muted)" }}>
                 {chatMode !== "chat" && <span style={{ color: "var(--accent)" }}>{chatMode === "search" ? "Search" : "Research"} · </span>}
-                / commands · Shift+Enter newline
+                {streaming
+                  ? <span style={{ color: "var(--accent)" }}>Esc to stop</span>
+                  : <>/ commands · Shift+Enter newline</>}
               </span>
             </div>
           </div>

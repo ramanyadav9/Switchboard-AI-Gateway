@@ -176,7 +176,7 @@ async def chat_sse(
 
     if has_agent:
         return StreamingResponse(
-            _agentic_sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, body.agent_id),
+            _agentic_sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, body.agent_id, request),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -374,9 +374,18 @@ async def _llm_stream_with_retry(http_client, url, headers, body, max_retries=3)
     return None
 
 
-async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None):
+async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None, request=None):
     from app.routes.agent_poll import execute_tool
     from app.services.agent_tools import TOOL_DEFINITIONS
+
+    async def _client_gone() -> bool:
+        # True when the browser aborted the request (user pressed Esc / closed tab).
+        if request is None:
+            return False
+        try:
+            return await request.is_disconnected()
+        except Exception:
+            return False
 
     incr_active_generations(user_id)
     base = llm_base or settings.VLLM_LLM_BASE_URL
@@ -394,8 +403,14 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
     await loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
     loop.run_in_executor(None, _auto_title, conversation_id, user_content)
 
+    interrupted = False
     try:
         for turn in range(max_turns):
+            # Stop cleanly if the user interrupted (Esc) before starting a new turn.
+            if await _client_gone():
+                interrupted = True
+                break
+
             raw_content = ""
             raw_thinking = ""
             tool_calls_accum: dict[int, dict] = {}
@@ -497,6 +512,11 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
 
             # Execute each tool call
             for tc_entry in tc_list:
+                # Don't start another tool if the user interrupted mid-turn.
+                if await _client_gone():
+                    interrupted = True
+                    break
+
                 tc_name = tc_entry["function"]["name"]
                 try:
                     params = json.loads(tc_entry["function"]["arguments"])
@@ -531,6 +551,9 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
                                      json.dumps(tool_content), "tool_result", None, tc_entry["id"])
                 loop.run_in_executor(None, _save_tool_execution, conversation_id,
                                      agent_id or "", tc_name, params, result, turn)
+
+            if interrupted:
+                break
 
     finally:
         decr_active_generations(user_id)

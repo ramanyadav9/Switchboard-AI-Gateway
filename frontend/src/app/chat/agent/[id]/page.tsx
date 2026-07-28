@@ -658,10 +658,17 @@ export default function AgentConversationPage() {
   const [showAgentPanel, setShowAgentPanel] = useState(true);
   const [panelTab, setPanelTab] = useState<"agents" | "files">("agents");
   const [filesAgent, setFilesAgent] = useState<AgentInfo | null>(null);
-  const [fEntries, setFEntries] = useState<{ name: string; type: string; size?: number }[]>([]);
-  const [fPath, setFPath] = useState<string[]>([]);
+  type FEntry = { name: string; type: string; size?: number };
+  const [fTree, setFTree] = useState<Record<string, FEntry[]>>({});
+  const [fOpen, setFOpen] = useState<Set<string>>(new Set());
+  const [fChanged, setFChanged] = useState<Set<string>>(new Set());
   const [fLoading, setFLoading] = useState(false);
   const [fView, setFView] = useState<{ name: string; content: string } | null>(null);
+  const filesAgentRef = useRef<AgentInfo | null>(null);
+  filesAgentRef.current = filesAgent;
+  const fOpenRef = useRef<Set<string>>(new Set());
+  fOpenRef.current = fOpen;
+  const treeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
   const [showSlashCommands, setShowSlashCommands] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -720,44 +727,71 @@ export default function AgentConversationPage() {
     }
   }
 
-  // ---- Workspace file browser (uses the agent's remote ls / read_file) ----
-  async function browseFiles(agent: AgentInfo, pathArr: string[]) {
-    setFLoading(true);
-    setFView(null);
+  // ---- Workspace file TREE (uses the agent's remote ls / read_file) ----
+  async function loadDir(agent: AgentInfo, path: string) {
     try {
-      const pathStr = pathArr.join("/");
-      const res = await agentsApi.exec(agent.id, "ls", pathStr ? { path: pathStr } : {});
-      const entries = Array.isArray(res?.entries) ? res.entries : Array.isArray(res) ? res : [];
-      setFEntries(entries as { name: string; type: string; size?: number }[]);
-      setFPath(pathArr);
+      const res = await agentsApi.exec(agent.id, "ls", path ? { path } : {});
+      const entries = (Array.isArray(res?.entries) ? res.entries : Array.isArray(res) ? res : []) as FEntry[];
+      setFTree((prev) => ({ ...prev, [path]: entries }));
     } catch {
-      toast("Couldn't list files", "error");
-      setFEntries([]);
-    } finally {
-      setFLoading(false);
+      /* per-dir errors are non-fatal */
     }
   }
 
-  function openFilesFor(agent: AgentInfo) {
+  async function openFilesFor(agent: AgentInfo) {
     setFilesAgent(agent);
     setPanelTab("files");
     setShowAgentPanel(true);
-    browseFiles(agent, []);
+    setFTree({});
+    setFOpen(new Set());
+    setFView(null);
+    setFLoading(true);
+    await loadDir(agent, "");
+    setFLoading(false);
   }
 
-  async function viewAgentFile(name: string) {
-    if (!filesAgent) return;
+  function toggleDir(path: string) {
+    setFOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        const agent = filesAgentRef.current;
+        if (agent && !fTree[path]) loadDir(agent, path);
+      }
+      return next;
+    });
+  }
+
+  async function viewAgentFile(path: string) {
+    const agent = filesAgentRef.current;
+    if (!agent) return;
     setFLoading(true);
     try {
-      const full = [...fPath, name].join("/");
-      const res = await agentsApi.exec(filesAgent.id, "read_file", { path: full });
+      const res = await agentsApi.exec(agent.id, "read_file", { path });
       const content = res?.content ?? res?.text ?? (typeof res === "string" ? res : JSON.stringify(res, null, 2));
-      setFView({ name, content: String(content) });
+      setFView({ name: path.split("/").pop() || path, content: String(content) });
     } catch {
       toast("Couldn't read file", "error");
     } finally {
       setFLoading(false);
     }
+  }
+
+  // Re-list the root + every expanded folder (called after the agent touches files).
+  function refreshTree() {
+    const agent = filesAgentRef.current;
+    if (!agent) return;
+    ["", ...Array.from(fOpenRef.current)].forEach((p) => loadDir(agent, p));
+  }
+
+  // Debounced live refresh while the agent works; optionally flag a changed path.
+  function scheduleTreeRefresh(changedPath?: string) {
+    if (changedPath) setFChanged((prev) => new Set(prev).add(changedPath));
+    if (!filesAgentRef.current) return;
+    if (treeRefreshTimer.current) clearTimeout(treeRefreshTimer.current);
+    treeRefreshTimer.current = setTimeout(refreshTree, 700);
   }
 
   useEffect(() => {
@@ -872,6 +906,12 @@ export default function AgentConversationPage() {
               else if (rawContent && parsed.thinking) setStreamContent("");
             } else if (msg.type === "tool_call") {
               setToolCalls(prev => [...prev, { tool: msg.tool, params: msg.params }]);
+              // Live file tree: reflect files the agent creates/edits as it works.
+              if ((msg.tool === "write_file" || msg.tool === "edit_file") && msg.params?.path) {
+                scheduleTreeRefresh(String(msg.params.path));
+              } else if (msg.tool === "bash") {
+                scheduleTreeRefresh();
+              }
             } else if (msg.type === "tool_result") {
               setToolCalls(prev => prev.map((tc, i) =>
                 i === prev.length - 1 ? { ...tc, result: msg.result, error: msg.error, success: msg.success, duration: msg.duration_ms } : tc
@@ -880,6 +920,7 @@ export default function AgentConversationPage() {
               setStreamContent("");
               setStreamThinking("");
               setToolCalls([]);
+              refreshTree(); // final sync of the file tree after the turn
               conversations.get(id).then((data) => {
                 setMessages(
                   (data.messages || []).map(
@@ -1215,6 +1256,44 @@ export default function AgentConversationPage() {
   }
 
   const onlineCount = agentsList.filter((a) => a.status === "online").length;
+
+  // Recursive file-tree renderer for the Files panel.
+  function renderTree(dir: string, depth: number): React.ReactNode {
+    const entries = fTree[dir];
+    if (!entries) return null;
+    const sorted = [...entries].sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
+    return sorted.map((e) => {
+      const full = dir ? `${dir}/${e.name}` : e.name;
+      const isOpen = fOpen.has(full);
+      const changed = fChanged.has(full) || [...fChanged].some((c) => c.split("/").pop() === e.name);
+      return (
+        <div key={full}>
+          <button
+            onClick={() => (e.type === "dir" ? toggleDir(full) : viewAgentFile(full))}
+            className="w-full flex items-center gap-1 py-1 pr-2 text-left text-[12px] transition-colors hover:bg-white/5"
+            style={{ paddingLeft: 6 + depth * 12 }}
+          >
+            {e.type === "dir" ? (
+              <span className={`material-symbols-outlined text-[14px] shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} style={{ color: "var(--fg-muted)" }}>chevron_right</span>
+            ) : (
+              <span className="w-[14px] shrink-0" />
+            )}
+            <span className="material-symbols-outlined text-[14px] shrink-0" style={{ color: e.type === "dir" ? "#a855f7" : "var(--fg-muted)" }}>
+              {e.type === "dir" ? "folder" : "description"}
+            </span>
+            <span className="truncate flex-1" style={{ color: changed ? "var(--success)" : "var(--fg-secondary)" }}>{e.name}</span>
+            {changed && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "var(--success)" }} title="Changed by agent" />}
+            {e.type !== "dir" && e.size != null && !changed && (
+              <span className="text-[10px] font-[family-name:var(--font-mono)] shrink-0" style={{ color: "var(--fg-muted)" }}>
+                {e.size > 1024 ? `${(e.size / 1024).toFixed(1)}K` : `${e.size}B`}
+              </span>
+            )}
+          </button>
+          {e.type === "dir" && isOpen && renderTree(full, depth + 1)}
+        </div>
+      );
+    });
+  }
 
   return (
     <div className="flex h-full">
@@ -1675,31 +1754,22 @@ export default function AgentConversationPage() {
 
         {panelTab === "files" && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* toolbar: breadcrumb + refresh */}
-            <div className="flex items-center gap-1 px-2 py-1.5 shrink-0 overflow-x-auto" style={{ borderBottom: "1px solid var(--border)" }}>
+            {/* toolbar: workspace root + refresh */}
+            <div className="flex items-center gap-2 px-2.5 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
               {!filesAgent ? (
-                <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>Select an agent</span>
+                <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>No agent selected</span>
               ) : (
-                <div className="flex items-center gap-0.5 text-[11px] font-[family-name:var(--font-mono)] min-w-0 flex-1">
-                  <button onClick={() => browseFiles(filesAgent, [])} className="hover:opacity-80 truncate max-w-[90px]" style={{ color: fPath.length ? "var(--accent)" : "var(--fg-secondary)" }} title={filesAgent.name}>
-                    {filesAgent.name || "root"}
+                <>
+                  <span className="material-symbols-outlined text-[14px] shrink-0" style={{ color: "#a855f7" }}>workspaces</span>
+                  <span className="text-[12px] font-[family-name:var(--font-mono)] truncate flex-1" style={{ color: "var(--fg-secondary)" }} title={filesAgent.workspace}>{filesAgent.name || "workspace"}</span>
+                  <button onClick={refreshTree} title="Refresh tree" className="shrink-0 hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
+                    <span className={`material-symbols-outlined text-[15px] ${fLoading ? "animate-spin" : ""}`}>refresh</span>
                   </button>
-                  {fPath.map((seg, i) => (
-                    <span key={i} className="flex items-center gap-0.5 min-w-0">
-                      <span style={{ color: "var(--fg-muted)" }}>/</span>
-                      <button onClick={() => browseFiles(filesAgent, fPath.slice(0, i + 1))} className="hover:opacity-80 truncate max-w-[80px]" style={{ color: i === fPath.length - 1 ? "var(--fg)" : "var(--accent)" }}>{seg}</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {filesAgent && (
-                <button onClick={() => browseFiles(filesAgent, fPath)} title="Refresh" className="ml-auto shrink-0 hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
-                  <span className={`material-symbols-outlined text-[15px] ${fLoading ? "animate-spin" : ""}`}>refresh</span>
-                </button>
+                </>
               )}
             </div>
 
-            {/* file viewer OR listing */}
+            {/* file viewer OR tree */}
             <div className="flex-1 overflow-auto">
               {fView ? (
                 <div className="flex flex-col h-full">
@@ -1716,30 +1786,12 @@ export default function AgentConversationPage() {
                   <span className="material-symbols-outlined text-[32px] mb-2" style={{ color: "var(--fg-muted)" }}>folder_off</span>
                   <p className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Pick an online agent to browse its files.</p>
                 </div>
-              ) : fLoading && fEntries.length === 0 ? (
+              ) : fLoading && !fTree[""] ? (
                 <div className="flex items-center justify-center py-8 text-[12px]" style={{ color: "var(--fg-muted)" }}>Loading…</div>
-              ) : fEntries.length === 0 ? (
-                <div className="text-center py-8 text-[12px]" style={{ color: "var(--fg-muted)" }}>Empty folder</div>
+              ) : (fTree[""]?.length ?? 0) === 0 ? (
+                <div className="text-center py-8 text-[12px]" style={{ color: "var(--fg-muted)" }}>Empty workspace</div>
               ) : (
-                <div className="py-1">
-                  {[...fEntries].sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1)).map((e) => (
-                    <button
-                      key={e.name}
-                      onClick={() => (e.type === "dir" ? browseFiles(filesAgent!, [...fPath, e.name]) : viewAgentFile(e.name))}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[12px] transition-colors hover:bg-white/5"
-                    >
-                      <span className="material-symbols-outlined text-[15px] shrink-0" style={{ color: e.type === "dir" ? "#a855f7" : "var(--fg-muted)" }}>
-                        {e.type === "dir" ? "folder" : "description"}
-                      </span>
-                      <span className="truncate flex-1" style={{ color: "var(--fg-secondary)" }}>{e.name}</span>
-                      {e.type !== "dir" && e.size != null && (
-                        <span className="text-[10px] font-[family-name:var(--font-mono)] shrink-0" style={{ color: "var(--fg-muted)" }}>
-                          {e.size > 1024 ? `${(e.size / 1024).toFixed(1)}K` : `${e.size}B`}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+                <div className="py-1">{renderTree("", 0)}</div>
               )}
             </div>
           </div>

@@ -60,19 +60,6 @@ async def proxy_request(
     db: Session,
     resolve_byok: bool = False,
 ):
-    limit_key = caller.api_key.id if caller.api_key else caller.user.id
-    limit = rpm_limit_for(
-        caller.user,
-        caller.api_key.rpm_limit if caller.api_key else None,
-    )
-    allowed, retry_after = check_rate_limit(limit_key, limit)
-    if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded",
-            headers={"Retry-After": str(retry_after)},
-        )
-
     body = await request.body()
     content_type_in = request.headers.get("content-type", "application/json")
     model = _extract_model(body, content_type_in)
@@ -81,6 +68,7 @@ async def proxy_request(
     # Model scope + BYOK routing apply to LLM chat calls only (resolve_byok=True).
     # STT/TTS have no chat model concept and stay on the local backends.
     upstream_key = settings.VLLM_API_KEY
+    is_local = True
     if resolve_byok:
         if caller.api_key and caller.api_key.models_allowed:
             # A scoped key must present a parseable, allowed model.
@@ -99,6 +87,7 @@ async def proxy_request(
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         target_url = chat_completions_url(base)
+        is_local = base == settings.VLLM_LLM_BASE_URL
     elif caller.api_key and caller.api_key.models_allowed and model:
         # Non-LLM path: keep the original lenient allowlist behavior.
         if model not in caller.api_key.models_allowed:
@@ -106,6 +95,20 @@ async def proxy_request(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"API key not authorized for model '{model}'",
             )
+
+    # Rate limit. Unlimited tiers stay unlimited for BYOK, but LOCAL requests (chat +
+    # STT/TTS on the local backends) always get a safety cap so one user can't overload it.
+    limit_key = caller.api_key.id if caller.api_key else caller.user.id
+    limit = rpm_limit_for(caller.user, caller.api_key.rpm_limit if caller.api_key else None)
+    if is_local and not limit:
+        limit = settings.LOCAL_RPM_SAFETY_CAP
+    allowed, retry_after = check_rate_limit(limit_key, limit)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
 
     is_stream = False
     if "application/json" in content_type_in:

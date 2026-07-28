@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Context window (match vLLM --max-model-len)
     MAX_MODEL_LEN: int = 32768
 
+    # Safety cap (requests/min) on LOCAL-model requests even for "unlimited" tiers,
+    # so one user can't overload the shared local GPU. BYOK requests aren't capped by this.
+    LOCAL_RPM_SAFETY_CAP: int = 120
+
     # SearXNG (web search)
     SEARXNG_URL: str = "http://localhost:8888"
     

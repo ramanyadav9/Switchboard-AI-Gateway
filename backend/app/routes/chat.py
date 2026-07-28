@@ -134,13 +134,6 @@ async def chat_sse(
     user = caller.user
     api_key = caller.api_key
 
-    # Rate limit. rpm_limit_for returns None for unlimited tiers (e.g. admin); pass it
-    # through — check_request_rate treats None/0 as unlimited (was collapsed to 50).
-    limit = rpm_limit_for(user, api_key.rpm_limit if api_key else None)
-    allowed, retry_after = check_request_rate(user.id, limit)
-    if not allowed:
-        raise HTTPException(status_code=429, detail=f"Rate limited. Retry after {retry_after}s")
-
     # Concurrency limit
     active = get_active_generations(user.id)
     if active >= MAX_CONCURRENT_GENS:
@@ -165,14 +158,6 @@ async def chat_sse(
         if model not in api_key.models_allowed:
             raise HTTPException(status_code=403, detail=f"Key not authorized for model '{model}'")
 
-    # Build context
-    has_agent = bool(body.agent_id)
-    usettings = db.query(UserSettings).filter(UserSettings.user_id == user.id).first()
-    memory_scope = "all_chats" if (usettings and getattr(usettings, "cross_chat_memory", False)) else "this_chat"
-    ctx = build_prompt(conv, content, db, agent_tools=has_agent, memory_scope=memory_scope)
-
-    http_client = request.app.state.http_client
-
     # Resolve provider (external BYOK or local vLLM). order_by makes the choice
     # deterministic when a model id is served by more than one provider.
     user_providers = db.query(UserProvider).filter(
@@ -184,6 +169,25 @@ async def chat_sse(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    is_local = llm_base == settings.VLLM_LLM_BASE_URL
+
+    # Rate limit. Unlimited tiers stay unlimited for BYOK (external providers), but
+    # LOCAL-model requests always get a safety cap so one user can't overload the GPU.
+    limit = rpm_limit_for(user, api_key.rpm_limit if api_key else None)
+    effective_limit = limit
+    if is_local and not limit:
+        effective_limit = settings.LOCAL_RPM_SAFETY_CAP
+    allowed, retry_after = check_request_rate(user.id, effective_limit)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Rate limited. Retry after {retry_after}s")
+
+    # Build context
+    has_agent = bool(body.agent_id)
+    usettings = db.query(UserSettings).filter(UserSettings.user_id == user.id).first()
+    memory_scope = "all_chats" if (usettings and getattr(usettings, "cross_chat_memory", False)) else "this_chat"
+    ctx = build_prompt(conv, content, db, agent_tools=has_agent, memory_scope=memory_scope)
+
+    http_client = request.app.state.http_client
 
     if has_agent:
         return StreamingResponse(

@@ -42,3 +42,4 @@ test_*.wav
 
 # Private planning — keep local, not on GitHub
 docs/AGENTIC_ROADMAP.md
+docs/CODEBASE_AUDIT.md

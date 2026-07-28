@@ -508,10 +508,11 @@ export default function ConversationPage() {
   }, [id, searchParams, toast]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
+    const el = scrollRef.current;
+    if (!el) return;
+    // Only auto-scroll if already near the bottom, so scrolling up to read isn't fought.
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    if (nearBottom) el.scrollTo({ top: el.scrollHeight });
   }, [messages, streamContent, streamThinking]);
 
   async function send() {

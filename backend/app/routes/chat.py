@@ -299,12 +299,13 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     user_tokens = estimate_tokens(user_content)
     assistant_tokens = completion_tokens or estimate_tokens(raw_content)
 
-    # Save asynchronously. On interrupt, raw_content is the partial that streamed, so
-    # the saved message matches the cut-off UI (never the full response).
+    # Save user then assistant IN ORDER, and await them so both commit before the
+    # client can send the next message (prevents out-of-order transcripts). On
+    # interrupt, raw_content is the partial that streamed (never the full response).
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
+    await loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
     if raw_content.strip() or raw_thinking.strip():
-        loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens, interrupted)
+        await loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens, interrupted)
     loop.run_in_executor(None, _auto_title, conversation_id, user_content)
     if not interrupted:
         loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
@@ -601,9 +602,12 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
 
     latency_ms = int((time.time() - start_time) * 1000)
 
+    # Await the assistant save so it commits BEFORE the client can send the next
+    # message — otherwise the next user message can get an earlier timestamp and the
+    # transcript renders out of order.
     if completed_normally:
         assistant_tokens = total_completion or estimate_tokens(raw_content)
-        loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
+        await loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
         loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
     elif interrupted and not tool_calls_accum and (raw_content.strip() or raw_thinking.strip()):
         # Interrupted mid-answer: save only the partial text that streamed, so the
@@ -613,9 +617,9 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
         if tm:
             p_thinking = raw_thinking or tm.group(1).strip()
             p_content = tm.group(2)
-        loop.run_in_executor(None, _save_message, conversation_id, "assistant",
-                             p_content, p_thinking or None,
-                             total_completion or estimate_tokens(raw_content), True)
+        await loop.run_in_executor(None, _save_message, conversation_id, "assistant",
+                                   p_content, p_thinking or None,
+                                   total_completion or estimate_tokens(raw_content), True)
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': total_prompt, 'completion_tokens': total_completion, 'latency_ms': latency_ms}})}\n\n"
 

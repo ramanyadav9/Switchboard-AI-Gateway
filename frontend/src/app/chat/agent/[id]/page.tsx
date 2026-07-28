@@ -930,10 +930,12 @@ export default function AgentConversationPage() {
   }, [id, searchParams, toast]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
+    const el = scrollRef.current;
+    if (!el) return;
+    // Only auto-scroll if the user is already near the bottom, so they can scroll up
+    // to read earlier messages while the model is still generating.
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    if (nearBottom) el.scrollTo({ top: el.scrollHeight });
   }, [messages, streamContent, streamThinking]);
 
   async function send() {

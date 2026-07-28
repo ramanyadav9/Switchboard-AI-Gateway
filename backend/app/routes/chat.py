@@ -74,7 +74,7 @@ def _maybe_summarize(conversation_id: str, http_client):
         msg_count = db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation_id).count()
         if not should_summarize(conv, msg_count):
             return
-        prompt = build_summary_messages(conversation_id, db)
+        prompt, covered = build_summary_messages(conversation_id, db)
         if not prompt:
             return
 
@@ -95,7 +95,9 @@ def _maybe_summarize(conversation_id: str, http_client):
                 import re
                 summary = re.sub(r"<think>[\s\S]*?</think>\s*", "", summary).strip()
                 conv.summary = summary
-                conv.summary_up_to = msg_count
+                # Only mark the messages the summary actually covers — the last few are
+                # still in the window and will be folded in on the next summarization.
+                conv.summary_up_to = covered
                 db.commit()
 
                 try:

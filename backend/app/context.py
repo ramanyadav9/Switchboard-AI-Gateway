@@ -52,6 +52,7 @@ Conversation:
 Summary:"""
 
 SUMMARY_TRIGGER = 10
+SUMMARY_KEEP_RECENT = 4  # most-recent messages left out of the summary (stay in the window)
 
 
 @dataclass
@@ -252,7 +253,11 @@ def should_summarize(conversation: Conversation, message_count: int) -> bool:
     return message_count - already_summarized >= SUMMARY_TRIGGER
 
 
-def build_summary_messages(conversation_id: str, db: Session) -> str:
+def build_summary_messages(conversation_id: str, db: Session) -> tuple[str, int]:
+    """Return (summary_prompt, covered_count). covered_count is how many messages the
+    summary actually spans (all but the most-recent SUMMARY_KEEP_RECENT) — callers must
+    set summary_up_to to THIS, not the total, or the last few messages get marked
+    summarized without being in the summary and are lost once they leave the window."""
     msgs = (
         db.query(ChatMessage)
         .filter(ChatMessage.conversation_id == conversation_id)
@@ -260,11 +265,11 @@ def build_summary_messages(conversation_id: str, db: Session) -> str:
         .all()
     )
     if len(msgs) < SUMMARY_TRIGGER:
-        return ""
-    cutoff = len(msgs) - 4
+        return "", 0
+    cutoff = len(msgs) - SUMMARY_KEEP_RECENT
     to_summarize = [m for m in msgs[:cutoff]
                     if getattr(m, "message_type", "text") not in ("tool_call", "tool_result") and m.role != "tool"]
     text = "\n".join(f"{m.role}: {m.content[:300]}" for m in to_summarize)
     if len(text) > 4000:
         text = text[:4000] + "..."
-    return SUMMARY_PROMPT.format(messages=text)
+    return SUMMARY_PROMPT.format(messages=text), cutoff

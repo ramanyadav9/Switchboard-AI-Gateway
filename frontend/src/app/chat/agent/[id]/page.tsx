@@ -844,19 +844,22 @@ export default function AgentConversationPage() {
     if (!agent) return;
     setChLoading(true);
     try {
-      const res = await agentsApi.exec(agent.id, "bash", {
-        command: 'git status --porcelain=v1 2>&1 && echo "@@NUM@@" && git diff --numstat HEAD 2>/dev/null',
-      });
-      const out: string = res?.output ?? res?.stdout ?? (typeof res === "string" ? res : "");
-      if (/not a git repository/i.test(out)) { setChState("nogit"); setChFiles([]); return; }
-      const [statusPart, numPart = ""] = out.split("@@NUM@@");
-      // numstat: added\tremoved\tpath
+      // Two separate calls (not one shell pipeline) so this works on Windows cmd.exe
+      // agents too — no `&&`, `echo` marker, or POSIX-only `2>/dev/null`. `2>&1` is
+      // understood by both cmd and POSIX shells.
+      const statusRes = await agentsApi.exec(agent.id, "bash", { command: "git status --porcelain=v1 2>&1" });
+      const statusOut: string = String(statusRes?.output ?? statusRes?.stdout ?? "");
+      if (/not a git repository/i.test(statusOut)) { setChState("nogit"); setChFiles([]); return; }
+
+      const numRes = await agentsApi.exec(agent.id, "bash", { command: "git diff --numstat HEAD 2>&1" });
+      const numOut: string = String(numRes?.output ?? numRes?.stdout ?? "");
+      // numstat: added\tremoved\tpath (non-matching lines, e.g. errors, are ignored)
       const stats = new Map<string, { added: number; removed: number }>();
-      for (const l of numPart.split("\n")) {
+      for (const l of numOut.split("\n")) {
         const m = l.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
         if (m) stats.set(m[3].trim(), { added: m[1] === "-" ? 0 : +m[1], removed: m[2] === "-" ? 0 : +m[2] });
       }
-      const files = statusPart.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.trim()).map((l) => {
+      const files = statusOut.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.trim()).map((l) => {
         const code = l.slice(0, 2).trim();
         const path = l.slice(3).trim().replace(/^"|"$/g, "");
         const st = stats.get(path);

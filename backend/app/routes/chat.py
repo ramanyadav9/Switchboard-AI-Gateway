@@ -194,14 +194,25 @@ async def chat_sse(
         return await _non_streaming(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key)
 
     return StreamingResponse(
-        _sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key),
+        _sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, request),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None):
+async def _client_disconnected(request) -> bool:
+    """True when the browser aborted the request (Esc / closed tab)."""
+    if request is None:
+        return False
+    try:
+        return await request.is_disconnected()
+    except Exception:
+        return False
+
+
+async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, request=None):
     incr_active_generations(user_id)
+    interrupted = False
 
     llm_body = {
         "model": model,
@@ -232,7 +243,13 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
                 return
 
             buffer = ""
+            stream_chunks = 0
             async for chunk in response.aiter_text():
+                # Stop mid-answer on user interrupt so we save the partial, not the full.
+                stream_chunks += 1
+                if stream_chunks % 8 == 0 and await _client_disconnected(request):
+                    interrupted = True
+                    break
                 buffer += chunk
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
@@ -281,12 +298,15 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     user_tokens = estimate_tokens(user_content)
     assistant_tokens = completion_tokens or estimate_tokens(raw_content)
 
-    # Save asynchronously
+    # Save asynchronously. On interrupt, raw_content is the partial that streamed, so
+    # the saved message matches the cut-off UI (never the full response).
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
-    loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
+    if raw_content.strip() or raw_thinking.strip():
+        loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
     loop.run_in_executor(None, _auto_title, conversation_id, user_content)
-    loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
+    if not interrupted:
+        loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'latency_ms': latency_ms}})}\n\n"
 
@@ -443,7 +463,14 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
                     return
 
                 buffer = ""
+                stream_chunks = 0
                 async for chunk in response.aiter_text():
+                    # Stop mid-answer if the user interrupted (Esc / closed tab), so the
+                    # saved message matches the cut-off UI instead of the full response.
+                    stream_chunks += 1
+                    if stream_chunks % 8 == 0 and await _client_gone():
+                        interrupted = True
+                        break
                     buffer += chunk
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)
@@ -493,6 +520,10 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
             except httpx.RequestError as e:
                 yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
                 return
+
+            # User interrupted mid-stream — stop the loop; the partial is saved below.
+            if interrupted:
+                break
 
             # No tool calls — final text response
             if not tool_calls_accum:
@@ -573,6 +604,17 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
         assistant_tokens = total_completion or estimate_tokens(raw_content)
         loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
         loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
+    elif interrupted and not tool_calls_accum and (raw_content.strip() or raw_thinking.strip()):
+        # Interrupted mid-answer: save only the partial text that streamed, so the
+        # stored message matches the cut-off shown in the UI (never the full response).
+        p_thinking, p_content = raw_thinking, raw_content
+        tm = re.match(r"^\s*<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
+        if tm:
+            p_thinking = raw_thinking or tm.group(1).strip()
+            p_content = tm.group(2)
+        loop.run_in_executor(None, _save_message, conversation_id, "assistant",
+                             p_content, p_thinking or None,
+                             total_completion or estimate_tokens(raw_content))
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': total_prompt, 'completion_tokens': total_completion, 'latency_ms': latency_ms}})}\n\n"
 

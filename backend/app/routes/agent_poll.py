@@ -49,6 +49,20 @@ def _result_key(request_id: str) -> str:
     return f"agent:resultq:{request_id}"
 
 
+def _busy_key(agent_id: str) -> str:
+    return f"agent:busy:{agent_id}"
+
+
+def _agent_is_busy(agent_id: str) -> bool:
+    """True while the agent is executing a tool (set by execute_tool). Sync Redis so
+    both is_agent_online and the sweeper can check it."""
+    try:
+        from app.cache import get_redis
+        return bool(get_redis().exists(_busy_key(agent_id)))
+    except Exception:
+        return False
+
+
 # ---------- Auth ----------
 
 def _auth_agent(token: str) -> tuple[User | None, ApiKey | None]:
@@ -319,8 +333,19 @@ async def execute_tool(agent_id: str, tool: str, params: dict, timeout: float | 
     }))
     await ar.expire(qkey, QUEUE_TTL)
 
-    # Block until the agent posts the result to rkey (or timeout)
-    popped = await ar.brpop([rkey], timeout=int(timeout))
+    # Mark the agent "busy" for the duration: while it runs a long tool it isn't polling,
+    # so last_seen goes stale — this flag keeps it "online" and prevents the offline sweep
+    # and the "Agent not connected" check from firing on a follow-up call.
+    busy_key = _busy_key(agent_id)
+    try:
+        await ar.set(busy_key, "1", ex=int(timeout) + 15)
+        # Block until the agent posts the result to rkey (or timeout)
+        popped = await ar.brpop([rkey], timeout=int(timeout))
+    finally:
+        try:
+            await ar.delete(busy_key)
+        except Exception:
+            pass
     if not popped:
         return {"success": False, "error": f"Tool call timed out after {timeout}s"}
     return json.loads(popped[1])
@@ -342,7 +367,10 @@ def is_agent_online(agent_id: str) -> bool:
         agent = db.query(AgentConnection).filter(AgentConnection.id == agent_id).first()
         if not agent or agent.status == "pending":
             return False
-        return _seconds_since(agent.last_seen) < AGENT_ONLINE_THRESHOLD
+        if _seconds_since(agent.last_seen) < AGENT_ONLINE_THRESHOLD:
+            return True
+        # A long tool is running (agent busy, not polling) — still online.
+        return _agent_is_busy(agent_id)
     finally:
         db.close()
 
@@ -375,6 +403,8 @@ async def offline_sweeper():
                 ).all()
                 for agent in online:
                     if _seconds_since(agent.last_seen) >= AGENT_ONLINE_THRESHOLD:
+                        if _agent_is_busy(agent.id):
+                            continue  # running a long tool — not actually offline
                         agent.status = "offline"
                         log.info(f"Agent {agent.name or agent.id} went offline (no poll for {int(_seconds_since(agent.last_seen))}s)")
                 db.commit()

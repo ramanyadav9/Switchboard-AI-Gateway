@@ -843,9 +843,13 @@ export default function ConversationPage() {
         <ModelSelector
           value={selectedModel}
           onChange={(m) => {
+            const prev = model;
             setSelectedModel(m);
             setModel(m); // update the badge + subsequent sends
-            conversations.update(id, { model: m }).catch(() => {}); // persist the choice
+            conversations.update(id, { model: m }).catch(() => {
+              setSelectedModel(prev); setModel(prev); // revert if it didn't persist
+              toast("Couldn't switch model — please retry", "error");
+            });
           }}
         />
         {selectedModel && selectedModel !== model && (

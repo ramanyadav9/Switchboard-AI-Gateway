@@ -180,13 +180,20 @@ def build_prompt(
     new_tokens = estimate_tokens(new_message)
     budget -= new_tokens
 
-    # Rolling summary prefix
+    # Rolling summary prefix — only include it if it still fits after the system prompt
+    # and the new message, so a huge system prompt/summary can't push the budget negative
+    # (which would force history in over the context window and 400 the provider).
     summary_msgs: list[dict] = []
     if conversation.summary:
         summary_text = f"[Summary of earlier conversation: {conversation.summary}]"
         summary_tokens = estimate_tokens(summary_text)
-        summary_msgs = [{"role": "system", "content": summary_text}]
-        budget -= summary_tokens
+        if summary_tokens < budget:
+            summary_msgs = [{"role": "system", "content": summary_text}]
+            budget -= summary_tokens
+        else:
+            was_truncated = True
+
+    budget = max(budget, 0)
 
     cached = get_cached_messages(conversation.id)
     if cached is not None:
@@ -209,7 +216,9 @@ def build_prompt(
 
     selected: list[dict] = []
     selected_tokens = 0
-    min_keep = 4
+    # Keep a few recent messages even if slightly over budget — but not when there's no
+    # room at all (a huge system prompt already fills the window), else we'd overflow.
+    min_keep = 4 if budget > 0 else 0
 
     for i in range(len(history) - 1, -1, -1):
         msg_tokens = token_counts[i] if i < len(token_counts) else estimate_tokens(history[i]["content"])

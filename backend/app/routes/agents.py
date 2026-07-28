@@ -64,10 +64,12 @@ def _seconds_since(dt) -> float:
 
 
 def _agent_to_response(agent: AgentConnection) -> dict:
-    from app.routes.agent_poll import AGENT_ONLINE_THRESHOLD
+    from app.routes.agent_poll import AGENT_ONLINE_THRESHOLD, _agent_is_busy
     status = agent.status
     if status != "pending" and agent.last_seen:
-        status = "online" if _seconds_since(agent.last_seen) < AGENT_ONLINE_THRESHOLD else "offline"
+        recent = _seconds_since(agent.last_seen) < AGENT_ONLINE_THRESHOLD
+        # A busy agent (mid tool) isn't polling but is very much alive → show online.
+        status = "online" if (recent or _agent_is_busy(agent.id)) else "offline"
     return {
         "id": agent.id,
         "name": agent.name,
@@ -166,9 +168,10 @@ async def exec_tool(
     duration_ms = int((time.time() - start) * 1000)
 
     # execute_tool returns an envelope {success, result, error, duration_ms}.
-    # Unwrap it so the REST response's `result` is the actual tool output
-    # (e.g. {"output": ..., "exit_code": ...}), not a doubly-nested envelope.
-    if isinstance(envelope, dict) and "success" in envelope and "result" in envelope:
+    # Unwrap it so the REST response's `result` is the actual tool output.
+    # A failure/timeout envelope has no `result` key — key off `success` alone so a
+    # timeout isn't misreported as a successful (empty) result.
+    if isinstance(envelope, dict) and "success" in envelope:
         success = envelope.get("success", True)
         error = envelope.get("error")
         inner = envelope.get("result")

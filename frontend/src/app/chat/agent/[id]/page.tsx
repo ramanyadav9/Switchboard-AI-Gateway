@@ -1408,7 +1408,14 @@ export default function AgentConversationPage() {
         style={{ borderBottom: "1px solid var(--border)" }}
       >
         <div className="flex items-center gap-3">
-          <ModelSelector value={selectedModel} onChange={(m) => { setSelectedModel(m); setModel(m); conversations.update(id, { model: m }).catch(() => {}); }} openSignal={modelMenuSignal} />
+          <ModelSelector value={selectedModel} onChange={(m) => {
+            const prev = model;
+            setSelectedModel(m); setModel(m);
+            conversations.update(id, { model: m }).catch(() => {
+              setSelectedModel(prev); setModel(prev);
+              toast("Couldn't switch model — please retry", "error");
+            });
+          }} openSignal={modelMenuSignal} />
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold"
             style={{ background: "rgba(168,85,247,0.12)", color: "#a855f7" }}

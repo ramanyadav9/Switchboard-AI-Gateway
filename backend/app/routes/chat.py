@@ -234,6 +234,12 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     completion_tokens = 0
     start_time = time.time()
 
+    # Persist the user message up-front so it isn't lost if the LLM errors mid-request.
+    loop = asyncio.get_event_loop()
+    user_tokens = estimate_tokens(user_content)
+    await loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
+    loop.run_in_executor(None, _auto_title, conversation_id, user_content)
+
     try:
         base = llm_base or settings.VLLM_LLM_BASE_URL
         key = llm_key or settings.VLLM_API_KEY
@@ -301,17 +307,13 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
         raw_thinking = raw_thinking or think_match.group(1).strip()
         raw_content = think_match.group(2).strip()
 
-    user_tokens = estimate_tokens(user_content)
     assistant_tokens = completion_tokens or estimate_tokens(raw_content)
 
-    # Save user then assistant IN ORDER, and await them so both commit before the
-    # client can send the next message (prevents out-of-order transcripts). On
+    # User message + title were already saved up-front. Save the assistant message
+    # (awaited, so it commits before the next turn → transcript stays ordered). On
     # interrupt, raw_content is the partial that streamed (never the full response).
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
     if raw_content.strip() or raw_thinking.strip():
         await loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens, interrupted)
-    loop.run_in_executor(None, _auto_title, conversation_id, user_content)
     if not interrupted:
         loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
 

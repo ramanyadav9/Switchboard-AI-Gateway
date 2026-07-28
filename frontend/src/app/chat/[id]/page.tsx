@@ -6,7 +6,7 @@ import { conversations, chatStream, skills as skillsApi, research as researchApi
 import { copyToClipboard } from "@/lib/clipboard";
 import { useToast } from "@/components/toast";
 
-type Message = { id?: string; role: string; content: string; thinking?: string; message_type?: string };
+type Message = { id?: string; role: string; content: string; thinking?: string; message_type?: string; interrupted?: boolean };
 
 function parseThinkTags(text: string) {
   // Tolerate leading whitespace/newlines the model may emit before <think>.
@@ -483,12 +483,13 @@ export default function ConversationPage() {
               m.role !== "tool" && m.message_type !== "tool_call"
             )
             .map(
-              (m: { id: string; role: string; content: string; thinking?: string; message_type?: string }) => ({
+              (m: { id: string; role: string; content: string; thinking?: string; message_type?: string; interrupted?: boolean }) => ({
                 id: m.id,
                 role: m.role,
                 content: m.content,
                 thinking: m.thinking || undefined,
                 message_type: m.message_type || "text",
+                interrupted: m.interrupted || undefined,
               })
             )
         );
@@ -632,8 +633,9 @@ export default function ConversationPage() {
         ...prev,
         {
           role: "assistant",
-          content: parsed.content || streamContent || "(stopped)",
+          content: parsed.content || streamContent || "",
           thinking: streamThinking || parsed.thinking || undefined,
+          interrupted: true,
         },
       ]);
     }
@@ -925,7 +927,13 @@ export default function ConversationPage() {
                         }
                   }
                 >
-                  <MessageContent text={m.content} />
+                  {m.content && <MessageContent text={m.content} />}
+                  {m.role === "assistant" && m.interrupted && (
+                    <div className="flex items-center gap-1 mt-1.5 text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                      <span className="material-symbols-outlined text-[13px]">stop_circle</span>
+                      Stopped by you
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -41,7 +41,7 @@ class ChatRequest(BaseModel):
     stream: bool = True
 
 
-def _save_message(conversation_id: str, role: str, content: str, thinking: str | None, token_count: int):
+def _save_message(conversation_id: str, role: str, content: str, thinking: str | None, token_count: int, interrupted: bool = False):
     db = SessionLocal()
     try:
         msg = ChatMessage(
@@ -51,6 +51,7 @@ def _save_message(conversation_id: str, role: str, content: str, thinking: str |
             content=content,
             thinking=thinking,
             token_count=token_count,
+            interrupted=interrupted,
         )
         db.add(msg)
         conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
@@ -303,7 +304,7 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, _save_message, conversation_id, "user", user_content, None, user_tokens)
     if raw_content.strip() or raw_thinking.strip():
-        loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens)
+        loop.run_in_executor(None, _save_message, conversation_id, "assistant", raw_content, raw_thinking or None, assistant_tokens, interrupted)
     loop.run_in_executor(None, _auto_title, conversation_id, user_content)
     if not interrupted:
         loop.run_in_executor(None, _maybe_summarize, conversation_id, None)
@@ -614,7 +615,7 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
             p_content = tm.group(2)
         loop.run_in_executor(None, _save_message, conversation_id, "assistant",
                              p_content, p_thinking or None,
-                             total_completion or estimate_tokens(raw_content))
+                             total_completion or estimate_tokens(raw_content), True)
 
     yield f"data: {json.dumps({'type': 'done', 'usage': {'prompt_tokens': total_prompt, 'completion_tokens': total_completion, 'latency_ms': latency_ms}})}\n\n"
 

@@ -77,6 +77,7 @@ class ChatMessage(Base):
     tool_calls_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     tool_call_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_compacted: Mapped[bool] = mapped_column(Boolean, default=False)
+    interrupted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     __table_args__ = (

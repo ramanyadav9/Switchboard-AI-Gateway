@@ -50,6 +50,7 @@ class MessageResponse(BaseModel):
     message_type: str = "text"
     tool_calls_json: list | None = None
     tool_call_id: str | None = None
+    interrupted: bool = False
     created_at: datetime
 
 
@@ -141,7 +142,8 @@ def get_conversation(
              "token_count": m.token_count, "created_at": m.created_at.isoformat(),
              "message_type": getattr(m, "message_type", "text"),
              "tool_calls_json": getattr(m, "tool_calls_json", None),
-             "tool_call_id": getattr(m, "tool_call_id", None)}
+             "tool_call_id": getattr(m, "tool_call_id", None),
+             "interrupted": bool(getattr(m, "interrupted", False))}
             for m in messages
         ],
     )
@@ -171,6 +173,7 @@ def get_messages(
                         message_type=getattr(m, "message_type", "text"),
                         tool_calls_json=getattr(m, "tool_calls_json", None),
                         tool_call_id=getattr(m, "tool_call_id", None),
+                        interrupted=bool(getattr(m, "interrupted", False)),
                         created_at=m.created_at)
         for m in messages
     ]

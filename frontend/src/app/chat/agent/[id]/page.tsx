@@ -11,7 +11,7 @@ const RPM_LIMIT = 50;
 import { useToast } from "@/components/toast";
 
 type ToolCall = { id?: string; name: string; arguments?: string; tool?: string; params?: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number };
-type Message = { id?: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string };
+type Message = { id?: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string; interrupted?: boolean };
 type AgentInfo = { id: string; name: string; hostname?: string; os?: string; workspace: string; status: string; tools?: string[]; last_seen?: string };
 
 function agentRelTime(iso?: string): string {
@@ -909,6 +909,7 @@ export default function AgentConversationPage() {
               message_type: m.message_type || "text",
               tool_calls_json: m.tool_calls_json || undefined,
               tool_call_id: m.tool_call_id || undefined,
+              interrupted: (m as { interrupted?: boolean }).interrupted || undefined,
             })
           )
         );
@@ -1022,12 +1023,13 @@ export default function AgentConversationPage() {
               conversations.get(id).then((data) => {
                 setMessages(
                   (data.messages || []).map(
-                    (msg: { id: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string }) => ({
+                    (msg: { id: string; role: string; content: string; thinking?: string; message_type?: string; tool_calls_json?: ToolCall[]; tool_call_id?: string; interrupted?: boolean }) => ({
                       id: msg.id, role: msg.role, content: msg.content,
                       thinking: msg.thinking || undefined,
                       message_type: msg.message_type || "text",
                       tool_calls_json: msg.tool_calls_json || undefined,
                       tool_call_id: msg.tool_call_id || undefined,
+                      interrupted: msg.interrupted || undefined,
                     })
                   )
                 );
@@ -1079,13 +1081,15 @@ export default function AgentConversationPage() {
         ...prev,
         {
           role: "assistant",
-          content: parsed.content || streamContent || "(stopped)",
+          content: parsed.content || streamContent || "",
           thinking: streamThinking || parsed.thinking || undefined,
+          interrupted: true,
         },
       ]);
     }
     setStreamContent("");
     setStreamThinking("");
+    setToolCalls([]);
     setStreaming(false);
   }
   stopRef.current = stop;
@@ -1528,7 +1532,13 @@ export default function AgentConversationPage() {
                       : { background: "var(--surface)", border: "1px solid var(--border)" }
                   }
                 >
-                  <MessageContent text={m.content} />
+                  {m.content && <MessageContent text={m.content} />}
+                  {m.role === "assistant" && m.interrupted && (
+                    <div className="flex items-center gap-1 mt-1.5 text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                      <span className="material-symbols-outlined text-[13px]">stop_circle</span>
+                      Stopped by you
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

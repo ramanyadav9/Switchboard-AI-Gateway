@@ -356,6 +356,19 @@ function diffLines(oldStr: string, newStr: string): DiffLine[] {
   return out;
 }
 
+// Parse a `git diff` unified patch into colored DiffLines (headers dropped, @@ kept as context).
+function parseUnifiedDiff(text: string): DiffLine[] {
+  const out: DiffLine[] = [];
+  for (const line of text.split("\n")) {
+    if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ") || line.startsWith("new file") || line.startsWith("deleted file") || line.startsWith("similarity ") || line.startsWith("rename ")) continue;
+    if (line.startsWith("@@")) out.push({ type: "ctx", text: line });
+    else if (line.startsWith("+")) out.push({ type: "add", text: line.slice(1) });
+    else if (line.startsWith("-")) out.push({ type: "del", text: line.slice(1) });
+    else out.push({ type: "ctx", text: line.startsWith(" ") ? line.slice(1) : line });
+  }
+  return out;
+}
+
 const DIFF_MAX_LINES = 200;
 
 function DiffView({ diff }: { diff: DiffLine[] }) {
@@ -669,6 +682,14 @@ export default function AgentConversationPage() {
   const fOpenRef = useRef<Set<string>>(new Set());
   fOpenRef.current = fOpen;
   const treeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Files sub-tab: the workspace tree vs. the git changes view.
+  const [filesSubTab, setFilesSubTab] = useState<"tree" | "changes">("tree");
+  const filesSubTabRef = useRef<"tree" | "changes">("tree");
+  filesSubTabRef.current = filesSubTab;
+  const [chState, setChState] = useState<"idle" | "nogit" | "clean" | "ready">("idle");
+  const [chFiles, setChFiles] = useState<{ path: string; status: string; added?: number; removed?: number }[]>([]);
+  const [chLoading, setChLoading] = useState(false);
+  const [chDiff, setChDiff] = useState<{ path: string; lines: DiffLine[] } | null>(null);
   const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
   const [showSlashCommands, setShowSlashCommands] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -745,6 +766,8 @@ export default function AgentConversationPage() {
     setFTree({});
     setFOpen(new Set());
     setFView(null);
+    setChDiff(null);
+    setChState("idle");
     setFLoading(true);
     await loadDir(agent, "");
     setFLoading(false);
@@ -791,7 +814,66 @@ export default function AgentConversationPage() {
     if (changedPath) setFChanged((prev) => new Set(prev).add(changedPath));
     if (!filesAgentRef.current) return;
     if (treeRefreshTimer.current) clearTimeout(treeRefreshTimer.current);
-    treeRefreshTimer.current = setTimeout(refreshTree, 700);
+    treeRefreshTimer.current = setTimeout(() => {
+      refreshTree();
+      if (filesSubTabRef.current === "changes") loadChanges();
+    }, 700);
+  }
+
+  // ---- Git "Changes" view (runs git in the agent workspace over the bash tool) ----
+  const STATUS_MAP: Record<string, string> = { "??": "untracked", "A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "copied" };
+
+  async function loadChanges() {
+    const agent = filesAgentRef.current;
+    if (!agent) return;
+    setChLoading(true);
+    try {
+      const res = await agentsApi.exec(agent.id, "bash", {
+        command: 'git status --porcelain=v1 2>&1 && echo "@@NUM@@" && git diff --numstat HEAD 2>/dev/null',
+      });
+      const out: string = res?.output ?? res?.stdout ?? (typeof res === "string" ? res : "");
+      if (/not a git repository/i.test(out)) { setChState("nogit"); setChFiles([]); return; }
+      const [statusPart, numPart = ""] = out.split("@@NUM@@");
+      // numstat: added\tremoved\tpath
+      const stats = new Map<string, { added: number; removed: number }>();
+      for (const l of numPart.split("\n")) {
+        const m = l.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
+        if (m) stats.set(m[3].trim(), { added: m[1] === "-" ? 0 : +m[1], removed: m[2] === "-" ? 0 : +m[2] });
+      }
+      const files = statusPart.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.trim()).map((l) => {
+        const code = l.slice(0, 2).trim();
+        const path = l.slice(3).trim().replace(/^"|"$/g, "");
+        const st = stats.get(path);
+        return { path, status: STATUS_MAP[code[0]] || STATUS_MAP[code] || "modified", added: st?.added, removed: st?.removed };
+      });
+      setChFiles(files);
+      setChState(files.length ? "ready" : "clean");
+    } catch {
+      setChState("nogit");
+    } finally {
+      setChLoading(false);
+    }
+  }
+
+  async function viewChange(file: { path: string; status: string }) {
+    const agent = filesAgentRef.current;
+    if (!agent) return;
+    setChLoading(true);
+    try {
+      let lines: DiffLine[];
+      if (file.status === "untracked") {
+        const r = await agentsApi.exec(agent.id, "read_file", { path: file.path });
+        lines = diffLines("", String(r?.content ?? r?.text ?? ""));
+      } else {
+        const r = await agentsApi.exec(agent.id, "bash", { command: `git diff HEAD -- "${file.path}" 2>&1` });
+        lines = parseUnifiedDiff(String(r?.output ?? r?.stdout ?? ""));
+      }
+      setChDiff({ path: file.path, lines });
+    } catch {
+      toast("Couldn't load diff", "error");
+    } finally {
+      setChLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -1754,22 +1836,80 @@ export default function AgentConversationPage() {
 
         {panelTab === "files" && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* toolbar: workspace root + refresh */}
-            <div className="flex items-center gap-2 px-2.5 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
-              {!filesAgent ? (
-                <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>No agent selected</span>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined text-[14px] shrink-0" style={{ color: "#a855f7" }}>workspaces</span>
-                  <span className="text-[12px] font-[family-name:var(--font-mono)] truncate flex-1" style={{ color: "var(--fg-secondary)" }} title={filesAgent.workspace}>{filesAgent.name || "workspace"}</span>
-                  <button onClick={refreshTree} title="Refresh tree" className="shrink-0 hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
-                    <span className={`material-symbols-outlined text-[15px] ${fLoading ? "animate-spin" : ""}`}>refresh</span>
-                  </button>
-                </>
+            {/* sub-tabs: Tree | Changes + refresh */}
+            <div className="flex items-center gap-1 px-2 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+              <button
+                onClick={() => setFilesSubTab("tree")}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+                style={filesSubTab === "tree" ? { color: "var(--fg)", background: "var(--bg-emphasis)" } : { color: "var(--fg-muted)" }}
+              >
+                <span className="material-symbols-outlined text-[13px]">account_tree</span>Tree
+              </button>
+              <button
+                onClick={() => { setFilesSubTab("changes"); setChDiff(null); if (chState === "idle") loadChanges(); }}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+                style={filesSubTab === "changes" ? { color: "var(--fg)", background: "var(--bg-emphasis)" } : { color: "var(--fg-muted)" }}
+              >
+                <span className="material-symbols-outlined text-[13px]">difference</span>Changes
+                {chFiles.length > 0 && <span className="text-[9px] font-bold px-1 rounded-full" style={{ background: "var(--accent)", color: "#fff" }}>{chFiles.length}</span>}
+              </button>
+              {filesAgent && (
+                <button onClick={() => (filesSubTab === "changes" ? loadChanges() : refreshTree())} title="Refresh" className="ml-auto shrink-0 hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
+                  <span className={`material-symbols-outlined text-[15px] ${fLoading || chLoading ? "animate-spin" : ""}`}>refresh</span>
+                </button>
               )}
             </div>
 
-            {/* file viewer OR tree */}
+            {/* ── Changes sub-tab ── */}
+            {filesSubTab === "changes" && (
+              <div className="flex-1 overflow-auto">
+                {!filesAgent ? (
+                  <div className="text-center py-8 px-3 text-[12px]" style={{ color: "var(--fg-muted)" }}>Pick an online agent.</div>
+                ) : chDiff ? (
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-center gap-2 px-2 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+                      <button onClick={() => setChDiff(null)} className="hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
+                        <span className="material-symbols-outlined text-[15px]">arrow_back</span>
+                      </button>
+                      <span className="text-[12px] font-[family-name:var(--font-mono)] truncate flex-1" style={{ color: "var(--fg)" }}>{chDiff.path}</span>
+                    </div>
+                    <div className="p-2 font-[family-name:var(--font-mono)] text-[11px] leading-[16px]"><DiffView diff={chDiff.lines} /></div>
+                  </div>
+                ) : chLoading && chState === "idle" ? (
+                  <div className="flex items-center justify-center py-8 text-[12px]" style={{ color: "var(--fg-muted)" }}>Loading…</div>
+                ) : chState === "nogit" ? (
+                  <div className="text-center py-8 px-4">
+                    <span className="material-symbols-outlined text-[28px] mb-2" style={{ color: "var(--fg-muted)" }}>hide_source</span>
+                    <p className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Not a git repository — no changes to track.</p>
+                  </div>
+                ) : chState === "clean" ? (
+                  <div className="text-center py-8 px-4">
+                    <span className="material-symbols-outlined text-[28px] mb-2" style={{ color: "var(--success)" }}>check_circle</span>
+                    <p className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Working tree clean.</p>
+                  </div>
+                ) : (
+                  <div className="py-1">
+                    {chFiles.map((f) => {
+                      const sc = f.status === "added" || f.status === "untracked" ? "var(--success)" : f.status === "deleted" ? "var(--error)" : f.status === "renamed" ? "#a855f7" : "var(--syn-fn)";
+                      const letter = (f.status[0] || "m").toUpperCase();
+                      return (
+                        <button key={f.path} onClick={() => viewChange(f)} className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[12px] transition-colors hover:bg-white/5">
+                          <span className="font-[family-name:var(--font-mono)] text-[11px] font-bold w-3 shrink-0" style={{ color: sc }} title={f.status}>{letter}</span>
+                          <span className="truncate flex-1" style={{ color: "var(--fg-secondary)" }}>{f.path}</span>
+                          <span className="font-[family-name:var(--font-mono)] text-[10px] flex items-center gap-1 shrink-0">
+                            {f.added ? <span style={{ color: "var(--success)" }}>+{f.added}</span> : null}
+                            {f.removed ? <span style={{ color: "var(--error)" }}>-{f.removed}</span> : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Tree sub-tab: file viewer OR tree ── */}
+            {filesSubTab === "tree" && (
             <div className="flex-1 overflow-auto">
               {fView ? (
                 <div className="flex flex-col h-full">
@@ -1794,6 +1934,7 @@ export default function AgentConversationPage() {
                 <div className="py-1">{renderTree("", 0)}</div>
               )}
             </div>
+            )}
           </div>
         )}
 

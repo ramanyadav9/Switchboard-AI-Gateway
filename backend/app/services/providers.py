@@ -113,3 +113,17 @@ def resolve_provider(user_providers: list, model: str) -> dict | None:
                 "provider": p.provider,
             }
     return None
+
+
+def chat_completions_url(base: str) -> str:
+    """Build the /chat/completions URL for either a local or BYOK base.
+
+    BYOK provider base_urls already include the OpenAI-compatible version segment
+    (e.g. .../v1, .../v1beta/openai), so appending another /v1 would double it and
+    break routing (e.g. Kong "no Route matched"). The local vLLM base has no version
+    segment, so we add /v1 there.
+    """
+    b = (base or "").rstrip("/")
+    if b.endswith("/v1") or b.endswith("/openai"):
+        return f"{b}/chat/completions"
+    return f"{b}/v1/chat/completions"

@@ -18,7 +18,7 @@ from app.cache import (
 from app.config import get_settings
 from app.context import build_prompt, build_summary_messages, estimate_tokens, should_summarize
 from app.models import UserProvider
-from app.services.providers import resolve_provider
+from app.services.providers import resolve_provider, chat_completions_url
 from app.db import SessionLocal, get_db
 from app.models import ApiKey, ChatMessage, Conversation, User, UserSettings
 from app.ratelimit import rpm_limit_for
@@ -216,7 +216,7 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
         key = llm_key or settings.VLLM_API_KEY
         async with http_client.stream(
             "POST",
-            f"{base}/v1/chat/completions",
+            chat_completions_url(base),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
             json=llm_body,
         ) as response:
@@ -421,7 +421,7 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
             try:
                 response = await _llm_stream_with_retry(
                     http_client,
-                    f"{base}/v1/chat/completions",
+                    chat_completions_url(base),
                     {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
                     {"model": model, "messages": messages, "stream": True,
                      "temperature": temperature, "max_tokens": max_tokens,
@@ -577,7 +577,7 @@ async def _non_streaming(http_client, ctx, model, temperature, max_tokens, conve
         base = llm_base or settings.VLLM_LLM_BASE_URL
         key = llm_key or settings.VLLM_API_KEY
         response = await http_client.post(
-            f"{base}/v1/chat/completions",
+            chat_completions_url(base),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
             json={
                 "model": model,

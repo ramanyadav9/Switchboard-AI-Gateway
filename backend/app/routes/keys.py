@@ -91,7 +91,9 @@ def create_key(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    models_allowed = key_data.models_allowed or [settings.DEFAULT_MODEL]
+    # Empty list = all models allowed (local + any BYOK). Only restrict when the
+    # caller explicitly lists models. Defaulting to the local model blocked BYOK keys.
+    models_allowed = key_data.models_allowed or []
     litellm_key = try_provision_litellm_key(
         key_data.name, models_allowed, key_data.rpm_limit
     )

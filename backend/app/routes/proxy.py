@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import RequestLog
+from app.models import RequestLog, UserProvider
 from app.ratelimit import check_rate_limit, rpm_limit_for
 from app.routes.auth import Caller, get_caller
+from app.services.providers import resolve_llm_target, chat_completions_url
 
 router = APIRouter()
 settings = get_settings()
@@ -57,6 +58,7 @@ async def proxy_request(
     target_url: str,
     caller: Caller,
     db: Session,
+    resolve_byok: bool = False,
 ):
     limit_key = caller.api_key.id if caller.api_key else caller.user.id
     limit = rpm_limit_for(
@@ -76,8 +78,30 @@ async def proxy_request(
     model = _extract_model(body, content_type_in)
     req_path = request.url.path
 
-    if caller.api_key and caller.api_key.models_allowed:
-        if model and model not in caller.api_key.models_allowed:
+    # Model scope + BYOK routing apply to LLM chat calls only (resolve_byok=True).
+    # STT/TTS have no chat model concept and stay on the local backends.
+    upstream_key = settings.VLLM_API_KEY
+    if resolve_byok:
+        if caller.api_key and caller.api_key.models_allowed:
+            # A scoped key must present a parseable, allowed model.
+            if not model or model not in caller.api_key.models_allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"API key not authorized for model '{model or 'unknown'}'",
+                )
+        providers = db.query(UserProvider).filter(
+            UserProvider.user_id == caller.user.id,
+        ).order_by(UserProvider.created_at).all()
+        try:
+            base, upstream_key = resolve_llm_target(
+                providers, model, settings.VLLM_LLM_BASE_URL, settings.VLLM_API_KEY,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        target_url = chat_completions_url(base)
+    elif caller.api_key and caller.api_key.models_allowed and model:
+        # Non-LLM path: keep the original lenient allowlist behavior.
+        if model not in caller.api_key.models_allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"API key not authorized for model '{model}'",
@@ -92,7 +116,7 @@ async def proxy_request(
 
     headers = {
         "Content-Type": content_type_in,
-        "Authorization": f"Bearer {settings.VLLM_API_KEY}",
+        "Authorization": f"Bearer {upstream_key}",
     }
 
     start = time()
@@ -203,6 +227,7 @@ async def chat_completions(
 ):
     return await proxy_request(
         request, f"{settings.VLLM_LLM_BASE_URL}/v1/chat/completions", caller, db,
+        resolve_byok=True,
     )
 
 

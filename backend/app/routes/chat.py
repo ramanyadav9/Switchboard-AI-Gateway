@@ -18,7 +18,7 @@ from app.cache import (
 from app.config import get_settings
 from app.context import build_prompt, build_summary_messages, estimate_tokens, should_summarize
 from app.models import UserProvider
-from app.services.providers import resolve_provider, chat_completions_url
+from app.services.providers import resolve_llm_target, chat_completions_url
 from app.db import SessionLocal, get_db
 from app.models import ApiKey, ChatMessage, Conversation, User, UserSettings
 from app.ratelimit import rpm_limit_for
@@ -171,11 +171,17 @@ async def chat_sse(
 
     http_client = request.app.state.http_client
 
-    # Resolve provider (external BYOK or local vLLM)
-    user_providers = db.query(UserProvider).filter(UserProvider.user_id == user.id).all()
-    ext = resolve_provider(user_providers, model)
-    llm_base = ext["base_url"] if ext else settings.VLLM_LLM_BASE_URL
-    llm_key = ext["api_key"] if ext else settings.VLLM_API_KEY
+    # Resolve provider (external BYOK or local vLLM). order_by makes the choice
+    # deterministic when a model id is served by more than one provider.
+    user_providers = db.query(UserProvider).filter(
+        UserProvider.user_id == user.id,
+    ).order_by(UserProvider.created_at).all()
+    try:
+        llm_base, llm_key = resolve_llm_target(
+            user_providers, model, settings.VLLM_LLM_BASE_URL, settings.VLLM_API_KEY,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     if has_agent:
         return StreamingResponse(

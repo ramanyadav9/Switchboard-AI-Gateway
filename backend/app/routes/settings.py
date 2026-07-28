@@ -174,17 +174,22 @@ async def update_provider(
     if not p:
         raise HTTPException(status_code=404, detail="Provider not found")
 
-    if body.api_key is not None:
-        p.api_key_encrypted = encrypt_api_key(body.api_key)
-        models = await discover_models(p.base_url, body.api_key)
-        if models:
-            p.models_cached = models
+    # Apply base_url/name first so discovery runs against the FINAL endpoint.
     if body.base_url is not None:
         p.base_url = body.base_url
     if body.name is not None:
         p.name = body.name
+    if body.api_key is not None:
+        p.api_key_encrypted = encrypt_api_key(body.api_key)
     if body.is_enabled is not None:
         p.is_enabled = body.is_enabled
+
+    # Re-discover models whenever the key or the base_url changed.
+    if body.api_key is not None or body.base_url is not None:
+        key = body.api_key if body.api_key is not None else decrypt_api_key(p.api_key_encrypted)
+        models = await discover_models(p.base_url, key)
+        if models:
+            p.models_cached = models
     db.commit()
     db.refresh(p)
     return _to_response(p)

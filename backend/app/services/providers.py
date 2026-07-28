@@ -115,6 +115,26 @@ def resolve_provider(user_providers: list, model: str) -> dict | None:
     return None
 
 
+def resolve_llm_target(user_providers: list, model: str, local_base: str, local_key: str) -> tuple[str, str]:
+    """Return (base_url, api_key) for `model`.
+
+    Routes to a matching enabled BYOK provider, else the local server. Raises
+    ValueError if the model is only served by a provider that is currently disabled,
+    so we never silently send a BYOK model id to the local server (which yields an
+    opaque upstream error).
+    """
+    ext = resolve_provider(user_providers, model)
+    if ext:
+        return ext["base_url"], ext["api_key"]
+    for p in user_providers:
+        if model in (getattr(p, "models_cached", None) or []):
+            raise ValueError(
+                f"Model '{model}' belongs to a provider that is currently disabled. "
+                f"Enable it in Settings or choose another model."
+            )
+    return local_base, local_key
+
+
 def chat_completions_url(base: str) -> str:
     """Build the /chat/completions URL for either a local or BYOK base.
 

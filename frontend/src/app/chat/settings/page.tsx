@@ -555,6 +555,22 @@ export default function SettingsPage() {
   /* ---- template keys for the grid ---- */
   const templateKeys = Object.keys(templates);
 
+  /* ---- group models by provider for the Default Model picker (local first) ---- */
+  const NON_CHAT_MODEL = /embed|moderation|ocr|-tts|transcribe|realtime|-fim/i;
+  const modelGroups = (() => {
+    const byProv = new Map<string, ModelEntry[]>();
+    for (const m of allModels.filter((m) => !NON_CHAT_MODEL.test(m.id))) {
+      if (!byProv.has(m.provider)) byProv.set(m.provider, []);
+      byProv.get(m.provider)!.push(m);
+    }
+    const order = ["local", ...[...byProv.keys()].filter((k) => k !== "local").sort()];
+    return order.filter((k) => byProv.has(k)).map((k) => ({
+      key: k,
+      label: k === "local" ? "Local GPU" : byProv.get(k)![0].name || k,
+      items: byProv.get(k)!,
+    }));
+  })();
+
   if (settingsLoading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ color: "var(--fg-muted)" }}>
@@ -643,10 +659,12 @@ export default function SettingsPage() {
                 className="t-input w-full rounded px-3 py-2 text-[13px]"
               >
                 <option value="">Select a model</option>
-                {allModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.id}{m.provider ? ` (${m.provider})` : ""}
-                  </option>
+                {modelGroups.map((g) => (
+                  <optgroup key={g.key} label={g.label}>
+                    {g.items.map((m) => (
+                      <option key={`${g.key}:${m.id}`} value={m.id}>{m.id}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>

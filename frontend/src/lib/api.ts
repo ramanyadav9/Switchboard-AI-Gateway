@@ -67,7 +67,7 @@ export const conversations = {
   list: (archived: boolean = false, limit: number = 50) =>
     apiFetch(`/me/conversations?archived=${archived}&limit=${limit}`),
   get: (id: string) => apiFetch(`/me/conversations/${id}`),
-  update: (id: string, data: { title?: string; system_prompt?: string; is_archived?: boolean; mode?: string }) =>
+  update: (id: string, data: { title?: string; system_prompt?: string; is_archived?: boolean; mode?: string; model?: string }) =>
     apiFetch(`/me/conversations/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) =>
     apiFetch(`/me/conversations/${id}`, { method: "DELETE" }),

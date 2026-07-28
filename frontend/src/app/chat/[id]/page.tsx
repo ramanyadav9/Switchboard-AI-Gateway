@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { conversations, chatStream, models as modelsApi, skills as skillsApi, research as researchApi, search as searchApi } from "@/lib/api";
+import { conversations, chatStream, skills as skillsApi, research as researchApi, search as searchApi, providers as providersApi } from "@/lib/api";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useToast } from "@/components/toast";
 
@@ -352,68 +352,87 @@ function MessageContent({ text }: { text: string }) {
 
 /* ---- Model selector ---- */
 
+type ProviderModel = { id: string; provider: string; name: string };
+// Hide non-chat models (embeddings, OCR, moderation, TTS/transcribe, FIM) from the picker.
+const NON_CHAT_MODEL = /embed|moderation|ocr|-tts|transcribe|realtime|-fim/i;
+
+function useProviderModels() {
+  const [models, setModels] = useState<ProviderModel[]>([]);
+  useEffect(() => {
+    providersApi.allModels()
+      .then((list: ProviderModel[]) => setModels(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, []);
+  return models;
+}
+
+// Group chat-capable models by provider (local first).
+function groupModels(models: ProviderModel[]) {
+  const chat = models.filter((m) => !NON_CHAT_MODEL.test(m.id));
+  const byProv = new Map<string, ProviderModel[]>();
+  for (const m of chat) {
+    if (!byProv.has(m.provider)) byProv.set(m.provider, []);
+    byProv.get(m.provider)!.push(m);
+  }
+  const order = ["local", ...[...byProv.keys()].filter((k) => k !== "local").sort()];
+  return order.filter((k) => byProv.has(k)).map((k) => ({
+    key: k,
+    label: k === "local" ? "Local GPU" : byProv.get(k)![0].name || k,
+    items: byProv.get(k)!,
+  }));
+}
+
 function ModelSelector({
   value,
   onChange,
+  openSignal = 0,
 }: {
   value: string;
   onChange: (model: string) => void;
+  openSignal?: number;
 }) {
-  const [modelList, setModelList] = useState<{ id: string }[]>([]);
+  const models = useProviderModels();
   const [open, setOpen] = useState(false);
+  useEffect(() => { if (openSignal > 0) setOpen(true); }, [openSignal]);
 
-  useEffect(() => {
-    modelsApi
-      .list()
-      .then((res: { data?: { id: string }[] }) => {
-        setModelList(res.data || []);
-      })
-      .catch(() => {});
-  }, []);
-
-  if (modelList.length === 0) return null;
+  const groups = groupModels(models);
+  if (groups.length === 0) return null;
 
   return (
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-[family-name:var(--font-mono)] transition-colors hover:bg-white/5"
-        style={{
-          color: "var(--fg-muted)",
-          border: "1px solid var(--border)",
-        }}
+        style={{ color: "var(--fg-muted)", border: "1px solid var(--border)" }}
       >
         <span className="material-symbols-outlined text-[14px]">model_training</span>
-        {value || "Select model"}
+        <span className="max-w-[180px] truncate">{value || "Select model"}</span>
         <span className="material-symbols-outlined text-[12px]">expand_more</span>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div
-            className="absolute top-full mt-1 left-0 z-20 min-w-[220px] rounded-lg shadow-lg py-1 max-h-60 overflow-auto"
-            style={{
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-            }}
+            className="absolute top-full mt-1 left-0 z-20 min-w-[240px] max-w-[320px] rounded-lg shadow-lg py-1 max-h-72 overflow-auto"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
           >
-            {modelList.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => {
-                  onChange(m.id);
-                  setOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 text-[12px] font-[family-name:var(--font-mono)] transition-colors hover:bg-white/5 flex items-center gap-2"
-                style={{
-                  color: m.id === value ? "var(--accent)" : "var(--fg-secondary)",
-                }}
-              >
-                {m.id === value && (
-                  <span className="material-symbols-outlined text-[14px]" style={{ color: "var(--accent)" }}>check</span>
-                )}
-                <span className={m.id === value ? "" : "ml-[22px]"}>{m.id}</span>
-              </button>
+            {groups.map((g) => (
+              <div key={g.key}>
+                <div className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.06em] font-[family-name:var(--font-mono)]" style={{ color: "var(--fg-muted)" }}>{g.label}</div>
+                {g.items.map((m) => (
+                  <button
+                    key={`${g.key}:${m.id}`}
+                    onClick={() => { onChange(m.id); setOpen(false); }}
+                    className="w-full text-left px-3 py-1.5 text-[12px] font-[family-name:var(--font-mono)] transition-colors hover:bg-white/5 flex items-center gap-2"
+                    style={{ color: m.id === value ? "var(--accent)" : "var(--fg-secondary)" }}
+                  >
+                    {m.id === value ? (
+                      <span className="material-symbols-outlined text-[14px]" style={{ color: "var(--accent)" }}>check</span>
+                    ) : <span className="w-[14px]" />}
+                    <span className="truncate">{m.id}</span>
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         </>
@@ -820,7 +839,11 @@ export default function ConversationPage() {
       >
         <ModelSelector
           value={selectedModel}
-          onChange={setSelectedModel}
+          onChange={(m) => {
+            setSelectedModel(m);
+            setModel(m); // update the badge + subsequent sends
+            conversations.update(id, { model: m }).catch(() => {}); // persist the choice
+          }}
         />
         {selectedModel && selectedModel !== model && (
           <span

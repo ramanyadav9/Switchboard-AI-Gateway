@@ -59,11 +59,18 @@ def create_conversation(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    # Pick the model: explicit request → user's default (may be a BYOK model) → system default.
+    from app.models import UserSettings
+    default_model = settings.DEFAULT_MODEL
+    us = db.query(UserSettings).filter(UserSettings.user_id == current_user.id).first()
+    if us and us.default_model:
+        default_model = us.default_model
+
     conv = Conversation(
         id=str(uuid.uuid4()),
         user_id=current_user.id,
         title=body.title,
-        model=body.model or settings.DEFAULT_MODEL,
+        model=body.model or default_model,
         system_prompt=body.system_prompt,
         mode=body.mode or "chat",
     )
@@ -174,6 +181,7 @@ class ConversationUpdate(BaseModel):
     system_prompt: str | None = None
     is_archived: bool | None = None
     mode: str | None = None
+    model: str | None = None
 
 
 @router.patch("/{conv_id}")
@@ -194,6 +202,8 @@ def update_conversation(
         conv.is_archived = body.is_archived
     if body.mode is not None:
         conv.mode = body.mode
+    if body.model is not None:
+        conv.model = body.model
     db.commit()
     return {"detail": "Updated"}
 

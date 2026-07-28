@@ -1,31 +1,93 @@
 # Switchboard AI Gateway
 
-Self-hosted AI platform with ChatGPT-like chat, deep research, web search, and a developer API — all running on your own GPU. No data leaves your server.
+**Your own AI platform, on your own hardware.** Chat, a coding agent that works on your real machines, deep research, speech-to-text, and a drop-in OpenAI-compatible API — all self-hosted, all private. Nothing leaves your server.
 
-## What You Get
+Think of it as the operator's console for AI in your org: one place to *patch* your people and apps through to the models you run (or the ones you bring), without handing your data to anyone.
 
-**Chat App** (`/chat`) — like ChatGPT, on your hardware
-- SSE streaming with thinking mode (Qwen3 `<think>` tags)
-- Markdown rendering, code blocks with copy
-- Web search mode (SearXNG) — LLM answers with cited sources
-- Deep research mode — autonomous multi-step research with reports
-- Skills/prompt templates with `/` picker
-- Model selector — switch models mid-conversation
-- BYOK — bring your own API keys (OpenAI, Anthropic, Google, Groq, etc.)
-- Rolling conversation summary + RAG memory across sessions
-- Light/dark theme
+---
 
-**API Platform** (`/dashboard`) — like OpenAI's developer dashboard
-- OpenAI-compatible API (`/v1/chat/completions`, `/v1/audio/transcriptions`)
-- API key management with per-key STT config
-- Usage stats, charts, system health
-- Playground for direct LLM/STT testing
-- API documentation
+## Why Switchboard
 
-**Speech-to-Text**
-- Dual engine: SenseVoice (~70ms live streaming) + Whisper (99 languages batch)
-- WebSocket real-time transcription with language/emotion detection
-- REST file upload transcription
+- **It's yours.** Runs on your GPU (or any OpenAI-compatible endpoint you point it at). Conversations, code, and keys stay on your infrastructure.
+- **One gateway, every model.** Serve a local model like Qwen3-14B, *and* bring your own keys for OpenAI, Anthropic, Google, Groq, and more — switch per conversation.
+- **More than a chat box.** A real coding agent, autonomous research, live transcription, and a developer API — not just a wrapper around one endpoint.
+- **Familiar.** The chat feels like ChatGPT; the API is a literal drop-in for the OpenAI SDK. Your team and your code barely notice the switch.
+
+---
+
+## What you can do with it
+
+**🔒 A private ChatGPT for your team**
+Give everyone a fast, streaming chat assistant that runs entirely on your own GPU. No usage caps you don't set, no data sent to a third party.
+
+**🤖 An AI that works on your actual machines**
+Connect a lightweight agent to your laptop, a dev box, or a server. The model can then **read, write, and edit files and run commands *there*** — scaffold a project, fix a bug, run tests — while you watch the workspace change live in the browser.
+
+**🔌 A drop-in OpenAI replacement for your apps**
+Point any app or SDK at Switchboard and it just works — same API shape, your keys, your models, your usage dashboard.
+
+**🔎 A research assistant that cites its sources**
+Ask a hard question; it searches the web, reads the results, and writes a sourced report you can export to PDF.
+
+**🎙️ A transcription service**
+Real-time and batch speech-to-text with language and emotion detection.
+
+---
+
+## Features
+
+### 💬 Chat (`/chat`)
+- ChatGPT-style streaming replies with **thinking mode** (see the model reason, collapsed)
+- Markdown + syntax-highlighted code blocks with one-click copy
+- **Switch models mid-conversation** — local or any provider you've connected
+- **Skills** — reusable prompt templates, invoked with `/`
+- **Slash commands** — `/model`, `/cost`, `/search`, `/research`, and more (arrow-key + Tab navigation)
+- Light/dark theme, keyboard shortcuts, delete-with-confirm
+
+### 🤖 Coding Agent
+- Install a **tiny, zero-dependency agent** on any machine (Linux, macOS, WSL, Windows) with one command
+- **Approve devices** from the web UI — the agent only runs after you say so
+- The model gets tools — `read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls` — that **execute on your machine**, not ours
+- **Live workspace panel**: an expandable **file tree** that updates as the agent creates and edits files (changed files highlighted), plus a **Changes tab** showing `git` status and colored diffs
+- **Inline diffs** on every edit — see exactly what changed, `+/-` line counts and all
+- Run several agents (different machines *or* different folders) and pick which one handles a chat
+- **Esc interrupts** a running task instantly
+- Turn any chat into an agent session — plan in chat, then execute with an agent, same conversation
+
+### 🔎 Web Search & Deep Research
+- **Search mode** — the model answers from live web results with numbered citations
+- **Deep research** — an autonomous plan → search → read → synthesize loop that produces a structured, sourced report (exportable as PDF)
+
+### 🧠 Memory
+- **Rolling summary** keeps a long conversation coherent — the model doesn't forget what the session is about
+- **Cross-chat memory** (optional toggle in settings) — let a chat recall relevant summaries from your *other* conversations, so you don't repeat yourself
+
+### 🔌 Developer API (`/dashboard`)
+- **OpenAI-compatible** — `/v1/chat/completions`, `/v1/audio/transcriptions`
+- API-key management with per-key model access, rate limits, and STT config
+- Usage stats, charts, and system health at a glance
+- Built-in **playground** to test models and transcription
+
+### 🎙️ Speech-to-Text
+- Dual engine: **SenseVoice** for ~real-time live streaming, **Whisper** for 99-language batch
+- WebSocket live transcription + REST file upload
+
+### 🌐 Bring Your Own Model / Keys
+- Connect OpenAI, Anthropic, Google, Groq, DeepSeek, Mistral, Together, OpenRouter — keys encrypted at rest
+- Mix local and hosted models freely; each conversation picks its own
+
+---
+
+## How it works
+
+1. **Deploy** Switchboard on your server with Docker. It serves the web app + API behind a single port.
+2. **Bring a model** — run a local one on your GPU (Qwen3-14B out of the box), and/or connect provider keys.
+3. **Use it** — open the chat/research/agent web app, or point your apps at the OpenAI-compatible API.
+4. **For coding tasks** — install the agent on a machine, approve it, and the model works *there* while you watch in the browser.
+
+Everything runs inside your network; only the gateway port is exposed.
+
+---
 
 ## Quick Start
 
@@ -37,144 +99,70 @@ chmod +x deploy.sh
 ```
 
 Or manually:
+
 ```bash
 cp .env.production .env
-nano .env  # set SECRET_KEY, POSTGRES_PASSWORD, PUBLIC_URL
+nano .env   # set SECRET_KEY, POSTGRES_PASSWORD, PUBLIC_URL
 docker compose up -d --build
 ```
 
-Open `http://your-server:41237`
+Then open the gateway in your browser (default port **41237**).
 
-## Architecture
+> Deploying the coding agent, split GPU servers, and full configuration are covered in the [Deployment Guide](docs/DEPLOYMENT.md) and [Agent Guide](docs/AGENT.md).
 
-```
-Internet → :41237 (Caddy) ← only public port
-               │
-               ├── /chat/*     → frontend:3000
-               ├── /dashboard/* → frontend:3000
-               ├── /v1/*       → backend:8081 → vLLM
-               └── /ws/*       → backend:8081 → STT engines
+---
 
-┌─── Docker bridge network (internal) ────────────────┐
-│  frontend ←→ backend ←→ postgres ←→ redis ←→ searxng │
-└──────────────────────────────────────────────────────┘
-                    ↕ host.docker.internal
-         GPU services on host (127.0.0.1 only):
-           vLLM :8000 · Whisper :8004 · SenseVoice :8006
-```
+## Use it as an API
 
-## API Usage
-
-Drop-in OpenAI replacement — change `base_url` and `api_key`:
+A drop-in OpenAI replacement — just change `base_url` and `api_key`:
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="http://your-server:41237/v1",
-    api_key="sk-your-switchboard-key"
+    api_key="sk-your-switchboard-key",
 )
 
-response = client.chat.completions.create(
+resp = client.chat.completions.create(
     model="Qwen3-14B",
-    messages=[{"role": "user", "content": "Hello!"}]
+    messages=[{"role": "user", "content": "Hello!"}],
 )
-print(response.choices[0].message.content)
+print(resp.choices[0].message.content)
 ```
 
-Works with Python, Node.js, cURL, or any OpenAI SDK.
+Works with the Python or Node OpenAI SDKs, cURL, or anything that speaks the OpenAI API.
 
-## Features
+---
 
-| Feature | Description |
-|---------|-------------|
-| Chat + streaming | SSE with `<think>` tag support |
-| Web search | SearXNG → LLM answers with citations |
-| Deep research | Plan → search → read → extract → synthesize loop |
-| RAG memory | pgvector embeddings, cross-conversation retrieval |
-| Rolling summary | Auto-compress old messages every 10 turns |
-| BYOK providers | OpenAI, Anthropic, Google, Groq, DeepSeek, Mistral, Together, OpenRouter |
-| Skills | Reusable prompt templates with `/` picker |
-| Dual STT | SenseVoice (live) + Whisper (batch) |
-| API keys | Per-key model access, rate limits, STT config |
-| Theme toggle | Light/dark across all pages |
-| Keyboard shortcuts | Ctrl+N new chat, Ctrl+K search |
-| PDF export | Download research reports as PDF |
-| Global system prompt | Identity, safety, formatting rules |
-| 32K context | Full Qwen3-14B context window |
+## Under the hood (short version)
 
-## Tech Stack
+Self-hosted stack, everything on an internal network with a single public gateway:
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Python, FastAPI, SQLAlchemy, PostgreSQL (pgvector) |
-| Frontend | Next.js 16, TypeScript, Tailwind CSS v4 |
-| Cache | Redis 7 |
-| Search | SearXNG (self-hosted) |
-| Proxy | Caddy 2 |
-| LLM | vLLM + Qwen3-14B (FP8) |
-| STT | WhisperLiveKit + FunASR/SenseVoice |
-| Embeddings | fastembed (BAAI/bge-small-en-v1.5, CPU) |
+- **Frontend** — Next.js + TypeScript + Tailwind
+- **Backend** — FastAPI (Python) + PostgreSQL (pgvector) + Redis
+- **Models** — vLLM serving your local model, plus any OpenAI-compatible provider you connect
+- **Speech** — Whisper + SenseVoice
+- **Search** — self-hosted SearXNG
+- **Gateway** — Caddy reverse proxy (one exposed port)
 
-## Project Structure
+Full architecture, environment variables, and service layout live in the [Deployment Guide](docs/DEPLOYMENT.md).
 
-```
-Switchboard-AI-Gateway/
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI app
-│   │   ├── config.py            # Settings
-│   │   ├── context.py           # Context window + RAG + summary
-│   │   ├── models/              # SQLAlchemy ORM
-│   │   ├── routes/              # API endpoints
-│   │   │   ├── chat.py          # SSE chat streaming
-│   │   │   ├── research.py      # Deep research
-│   │   │   ├── skills.py        # Prompt templates
-│   │   │   ├── settings.py      # User settings + BYOK
-│   │   │   └── ...
-│   │   └── services/            # Business logic
-│   │       ├── research.py      # IterResearch engine
-│   │       ├── search.py        # SearXNG client
-│   │       ├── rag.py           # Vector retrieval
-│   │       └── providers.py     # BYOK encryption + routing
-│   └── Dockerfile
-├── frontend/
-│   └── src/app/
-│       ├── chat/                # Chat app
-│       │   ├── [id]/page.tsx    # Conversation (streaming + markdown)
-│       │   ├── settings/        # Profile + BYOK providers
-│       │   ├── skills/          # Prompt template manager
-│       │   └── research/        # Deep research UI
-│       └── dashboard/           # API platform
-├── docker-compose.yml           # Bridge network, 6 services
-├── Caddyfile                    # Reverse proxy (port 41237)
-├── deploy.sh                    # One-command deploy script
-└── docs/
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SECRET_KEY` | Yes | JWT signing key |
-| `POSTGRES_PASSWORD` | Yes | Database password |
-| `VLLM_API_KEY` | No | GPU service auth key |
-| `PUBLIC_URL` | No | Frontend API URL (empty = relative) |
-| `GATEWAY_PORT` | No | Public port (default: 41237) |
+---
 
 ## Security
 
-- All Docker services on internal bridge network — only Caddy is public
-- API keys stored with Fernet encryption (AES-128)
-- bcrypt password hashing
-- JWT authentication with configurable expiry
-- GPU services bound to 127.0.0.1 only
-- CORS configurable
+- Only the gateway port is public — every other service sits on an internal network, GPU services bound to localhost
+- API keys encrypted at rest (Fernet), passwords hashed with bcrypt, JWT auth
+- Coding agents connect **outbound** and run only after you approve the device; tools execute on *your* machine under your control
+
+---
 
 ## Documentation
 
-- [API Reference](docs/API.md)
-- [Deployment Guide](docs/DEPLOYMENT.md)
+- [API Reference](docs/API.md) — endpoints and examples
+- [Deployment Guide](docs/DEPLOYMENT.md) — all-in-one and split-server setups
+- [Agent Guide](docs/AGENT.md) — installing and running the coding agent
 
 ## License
 

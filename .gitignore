@@ -39,3 +39,6 @@ session-*.md
 mp3-output-*
 test_*.wav
 *.txt
+
+# Private planning — keep local, not on GitHub
+docs/AGENTIC_ROADMAP.md

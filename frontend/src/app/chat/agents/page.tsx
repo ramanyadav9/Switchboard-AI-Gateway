@@ -19,7 +19,7 @@ type Agent = {
 
 type ApiKey = {
   id: string;
-  prefix: string;
+  key_prefix: string;
   name: string;
 };
 
@@ -122,7 +122,7 @@ export default function AgentsPage() {
       .then((data: ApiKey[]) => {
         const list = Array.isArray(data) ? data : [];
         if (list.length > 0) {
-          setApiKey(list[0].prefix);
+          setApiKey(list[0].key_prefix);
         } else {
           setApiKey(null);
         }

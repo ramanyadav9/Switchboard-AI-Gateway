@@ -219,6 +219,13 @@ def build_prompt(
         selected.insert(0, history[i])
         selected_tokens += msg_tokens
 
+    # Never start the window on a `tool` message, or on an assistant message that carries
+    # tool_calls (its results may have been split off) — the provider 400s on an unpaired
+    # tool_call/tool. Drop such leading messages until the window opens on a clean turn.
+    while selected and (selected[0].get("role") == "tool" or selected[0].get("tool_calls")):
+        selected.pop(0)
+        was_truncated = True
+
     final = system_msgs + summary_msgs + selected + [{"role": "user", "content": new_message}]
     total = sum(estimate_tokens(m.get("content") or "") for m in final)
 

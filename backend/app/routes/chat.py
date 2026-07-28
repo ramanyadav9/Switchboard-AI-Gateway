@@ -134,9 +134,10 @@ async def chat_sse(
     user = caller.user
     api_key = caller.api_key
 
-    # Rate limit
+    # Rate limit. rpm_limit_for returns None for unlimited tiers (e.g. admin); pass it
+    # through — check_request_rate treats None/0 as unlimited (was collapsed to 50).
     limit = rpm_limit_for(user, api_key.rpm_limit if api_key else None)
-    allowed, retry_after = check_request_rate(user.id, limit or 50)
+    allowed, retry_after = check_request_rate(user.id, limit)
     if not allowed:
         raise HTTPException(status_code=429, detail=f"Rate limited. Retry after {retry_after}s")
 
@@ -546,13 +547,15 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
             assistant_msg: dict = {"role": "assistant", "content": raw_content or None, "tool_calls": tc_list}
             messages.append(assistant_msg)
 
-            # Persist assistant tool_call message
-            loop.run_in_executor(None, _save_tool_message, conversation_id, "assistant",
+            # Persist assistant tool_call message (awaited so it commits before its tool
+            # results — keeps the saved transcript valid and correctly ordered).
+            await loop.run_in_executor(None, _save_tool_message, conversation_id, "assistant",
                                 raw_content or "", "tool_call",
                                 [{"id": tc["id"], "name": tc["function"]["name"],
                                   "arguments": tc["function"]["arguments"]} for tc in tc_list])
 
             # Execute each tool call
+            executed_ids: set = set()
             for tc_entry in tc_list:
                 # Don't start another tool if the user interrupted mid-turn.
                 if await _client_gone():
@@ -571,8 +574,12 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
                 if _detect_doom_loop(tool_call_history):
                     doom_msg = f"Stopped: tool '{tc_name}' called {DOOM_LOOP_THRESHOLD} times with identical params. Try a different approach."
                     yield f"data: {json.dumps({'type': 'tool_result', 'tool': tc_name, 'success': False, 'error': doom_msg})}\n\n"
-                    messages.append({"role": "tool", "tool_call_id": tc_entry["id"],
-                                     "content": json.dumps({"error": doom_msg})})
+                    doom_content = json.dumps({"error": doom_msg})
+                    messages.append({"role": "tool", "tool_call_id": tc_entry["id"], "content": doom_content})
+                    # Persist it too, else the assistant tool_call is orphaned on reload.
+                    await loop.run_in_executor(None, _save_tool_message, conversation_id, "tool",
+                                               doom_content, "tool_result", None, tc_entry["id"])
+                    executed_ids.add(tc_entry["id"])
                     continue
 
                 yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc_name, 'params': params})}\n\n"
@@ -588,13 +595,22 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
                 messages.append({"role": "tool", "tool_call_id": tc_entry["id"],
                                  "content": json.dumps(tool_content)})
 
-                # Persist tool result message + execution record
-                loop.run_in_executor(None, _save_tool_message, conversation_id, "tool",
+                # Persist tool result (awaited to keep order) + execution audit record.
+                await loop.run_in_executor(None, _save_tool_message, conversation_id, "tool",
                                      json.dumps(tool_content), "tool_result", None, tc_entry["id"])
+                executed_ids.add(tc_entry["id"])
                 loop.run_in_executor(None, _save_tool_execution, conversation_id,
                                      agent_id or "", tc_name, params, result, turn)
 
             if interrupted:
+                # Pair every un-executed tool_call with a stub result so the persisted
+                # assistant tool_calls message isn't orphaned (an unpaired tool_call 400s).
+                for tc_entry in tc_list:
+                    if tc_entry["id"] in executed_ids:
+                        continue
+                    stub = json.dumps({"error": "interrupted by user"})
+                    await loop.run_in_executor(None, _save_tool_message, conversation_id, "tool",
+                                               stub, "tool_result", None, tc_entry["id"])
                 break
 
     finally:

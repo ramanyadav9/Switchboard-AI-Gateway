@@ -35,7 +35,10 @@ LONG_POLL_TIMEOUT = 25  # seconds — how long a poll blocks waiting for work (R
 # Must be > LONG_POLL_TIMEOUT, else an agent mid-long-poll looks "offline"
 AGENT_ONLINE_THRESHOLD = 40  # seconds — agent is "online" if polled within this
 QUEUE_TTL = 300  # seconds — pending tool-call queue expiry
-RESULT_TTL = 130  # seconds — result list expiry
+# Must exceed the agent's longest tool run (bash allows up to ~600s), else a slow
+# tool's result expires before the waiting loop can read it.
+MAX_TOOL_TIMEOUT = 660  # seconds — hard cap on how long we wait for one tool
+RESULT_TTL = 720  # seconds — result list expiry (> MAX_TOOL_TIMEOUT)
 
 
 def _queue_key(agent_id: str) -> str:
@@ -286,14 +289,22 @@ async def submit_result(
 
 # ---------- Functions used by the agentic loop (chat.py) ----------
 
-async def execute_tool(agent_id: str, tool: str, params: dict, timeout: float = 120.0) -> dict:
+async def execute_tool(agent_id: str, tool: str, params: dict, timeout: float | None = None) -> dict:
     """Queue a tool call in Redis and block (BRPOP) until the agent returns a result.
 
     Multi-worker safe: the agent's poll may hit a different uvicorn worker than the
     one running this loop — Redis is the shared channel between them.
+
+    The wait matches how long the tool itself may run (bash honors a `timeout` param),
+    so a long test/build isn't cut off at a fixed 120s and its result discarded.
     """
     if not is_agent_online(agent_id):
         raise ValueError("Agent not connected")
+
+    if timeout is None:
+        tp = params.get("timeout") if isinstance(params, dict) else None
+        base = float(tp) if isinstance(tp, (int, float)) else 120.0
+        timeout = min(base + 30, MAX_TOOL_TIMEOUT)
 
     request_id = str(uuid.uuid4())
     ar = get_async_redis()

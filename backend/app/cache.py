@@ -63,8 +63,8 @@ def clear_session(conversation_id: str):
     r.delete(f"session:{conversation_id}")
 
 
-def check_token_rate(user_id: str, tokens: int, limit: int) -> tuple[bool, int]:
-    if limit <= 0:
+def check_token_rate(user_id: str, tokens: int, limit: int | None) -> tuple[bool, int]:
+    if not limit or limit <= 0:
         return True, 0
     r = get_redis()
     import time
@@ -77,8 +77,8 @@ def check_token_rate(user_id: str, tokens: int, limit: int) -> tuple[bool, int]:
     return True, 0
 
 
-def check_request_rate(user_id: str, limit: int) -> tuple[bool, int]:
-    if limit <= 0:
+def check_request_rate(user_id: str, limit: int | None) -> tuple[bool, int]:
+    if not limit or limit <= 0:  # None/0 = unlimited
         return True, 0
     r = get_redis()
     import time

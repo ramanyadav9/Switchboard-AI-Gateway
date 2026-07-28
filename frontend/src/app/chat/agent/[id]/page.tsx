@@ -656,6 +656,12 @@ export default function AgentConversationPage() {
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [agentsList, setAgentsList] = useState<AgentInfo[]>([]);
   const [showAgentPanel, setShowAgentPanel] = useState(true);
+  const [panelTab, setPanelTab] = useState<"agents" | "files">("agents");
+  const [filesAgent, setFilesAgent] = useState<AgentInfo | null>(null);
+  const [fEntries, setFEntries] = useState<{ name: string; type: string; size?: number }[]>([]);
+  const [fPath, setFPath] = useState<string[]>([]);
+  const [fLoading, setFLoading] = useState(false);
+  const [fView, setFView] = useState<{ name: string; content: string } | null>(null);
   const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
   const [showSlashCommands, setShowSlashCommands] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -711,6 +717,46 @@ export default function AgentConversationPage() {
       loadAgents();
     } catch {
       toast("Failed to disconnect agent", "error");
+    }
+  }
+
+  // ---- Workspace file browser (uses the agent's remote ls / read_file) ----
+  async function browseFiles(agent: AgentInfo, pathArr: string[]) {
+    setFLoading(true);
+    setFView(null);
+    try {
+      const pathStr = pathArr.join("/");
+      const res = await agentsApi.exec(agent.id, "ls", pathStr ? { path: pathStr } : {});
+      const entries = Array.isArray(res?.entries) ? res.entries : Array.isArray(res) ? res : [];
+      setFEntries(entries as { name: string; type: string; size?: number }[]);
+      setFPath(pathArr);
+    } catch {
+      toast("Couldn't list files", "error");
+      setFEntries([]);
+    } finally {
+      setFLoading(false);
+    }
+  }
+
+  function openFilesFor(agent: AgentInfo) {
+    setFilesAgent(agent);
+    setPanelTab("files");
+    setShowAgentPanel(true);
+    browseFiles(agent, []);
+  }
+
+  async function viewAgentFile(name: string) {
+    if (!filesAgent) return;
+    setFLoading(true);
+    try {
+      const full = [...fPath, name].join("/");
+      const res = await agentsApi.exec(filesAgent.id, "read_file", { path: full });
+      const content = res?.content ?? res?.text ?? (typeof res === "string" ? res : JSON.stringify(res, null, 2));
+      setFView({ name, content: String(content) });
+    } catch {
+      toast("Couldn't read file", "error");
+    } finally {
+      setFLoading(false);
     }
   }
 
@@ -1604,17 +1650,102 @@ export default function AgentConversationPage() {
     {/* Right agent status panel */}
     {showAgentPanel && (
       <aside className="w-[280px] shrink-0 hidden lg:flex flex-col overflow-hidden" style={{ borderLeft: "1px solid var(--border)", background: "var(--surface)" }}>
-        <div className="flex items-center justify-between px-3 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[16px]" style={{ color: "#a855f7" }}>dns</span>
-            <span className="text-[13px] font-semibold">Agents</span>
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: "var(--bg-emphasis)", color: "var(--fg-muted)" }}>{agentsList.length}</span>
+        <div className="flex items-center justify-between px-2 py-2 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPanelTab("agents")}
+              className="flex items-center gap-1.5 px-2 py-1 rounded text-[12px] font-medium transition-colors"
+              style={panelTab === "agents" ? { color: "#a855f7", background: "rgba(168,85,247,0.12)" } : { color: "var(--fg-muted)" }}
+            >
+              <span className="material-symbols-outlined text-[15px]">dns</span>Agents
+              <span className="text-[9px] font-bold px-1 rounded-full" style={{ background: "var(--bg-emphasis)", color: "var(--fg-muted)" }}>{agentsList.length}</span>
+            </button>
+            <button
+              onClick={() => { setPanelTab("files"); if (!filesAgent) { const a = selectedAgent || agentsList.find((x) => x.status === "online"); if (a) openFilesFor(a); } }}
+              className="flex items-center gap-1.5 px-2 py-1 rounded text-[12px] font-medium transition-colors"
+              style={panelTab === "files" ? { color: "#a855f7", background: "rgba(168,85,247,0.12)" } : { color: "var(--fg-muted)" }}
+            >
+              <span className="material-symbols-outlined text-[15px]">folder</span>Files
+            </button>
           </div>
           <button onClick={() => setShowAgentPanel(false)} className="hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
             <span className="material-symbols-outlined text-[16px]">close</span>
           </button>
         </div>
 
+        {panelTab === "files" && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* toolbar: breadcrumb + refresh */}
+            <div className="flex items-center gap-1 px-2 py-1.5 shrink-0 overflow-x-auto" style={{ borderBottom: "1px solid var(--border)" }}>
+              {!filesAgent ? (
+                <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>Select an agent</span>
+              ) : (
+                <div className="flex items-center gap-0.5 text-[11px] font-[family-name:var(--font-mono)] min-w-0 flex-1">
+                  <button onClick={() => browseFiles(filesAgent, [])} className="hover:opacity-80 truncate max-w-[90px]" style={{ color: fPath.length ? "var(--accent)" : "var(--fg-secondary)" }} title={filesAgent.name}>
+                    {filesAgent.name || "root"}
+                  </button>
+                  {fPath.map((seg, i) => (
+                    <span key={i} className="flex items-center gap-0.5 min-w-0">
+                      <span style={{ color: "var(--fg-muted)" }}>/</span>
+                      <button onClick={() => browseFiles(filesAgent, fPath.slice(0, i + 1))} className="hover:opacity-80 truncate max-w-[80px]" style={{ color: i === fPath.length - 1 ? "var(--fg)" : "var(--accent)" }}>{seg}</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {filesAgent && (
+                <button onClick={() => browseFiles(filesAgent, fPath)} title="Refresh" className="ml-auto shrink-0 hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
+                  <span className={`material-symbols-outlined text-[15px] ${fLoading ? "animate-spin" : ""}`}>refresh</span>
+                </button>
+              )}
+            </div>
+
+            {/* file viewer OR listing */}
+            <div className="flex-1 overflow-auto">
+              {fView ? (
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center gap-2 px-2 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+                    <button onClick={() => setFView(null)} className="hover:opacity-70" style={{ color: "var(--fg-muted)" }}>
+                      <span className="material-symbols-outlined text-[15px]">arrow_back</span>
+                    </button>
+                    <span className="text-[12px] font-[family-name:var(--font-mono)] truncate flex-1" style={{ color: "var(--fg)" }}>{fView.name}</span>
+                  </div>
+                  <pre className="flex-1 overflow-auto p-2 text-[11px] leading-[16px] font-[family-name:var(--font-mono)] whitespace-pre" style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}>{fView.content}</pre>
+                </div>
+              ) : !filesAgent ? (
+                <div className="text-center py-8 px-3">
+                  <span className="material-symbols-outlined text-[32px] mb-2" style={{ color: "var(--fg-muted)" }}>folder_off</span>
+                  <p className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Pick an online agent to browse its files.</p>
+                </div>
+              ) : fLoading && fEntries.length === 0 ? (
+                <div className="flex items-center justify-center py-8 text-[12px]" style={{ color: "var(--fg-muted)" }}>Loading…</div>
+              ) : fEntries.length === 0 ? (
+                <div className="text-center py-8 text-[12px]" style={{ color: "var(--fg-muted)" }}>Empty folder</div>
+              ) : (
+                <div className="py-1">
+                  {[...fEntries].sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1)).map((e) => (
+                    <button
+                      key={e.name}
+                      onClick={() => (e.type === "dir" ? browseFiles(filesAgent!, [...fPath, e.name]) : viewAgentFile(e.name))}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[12px] transition-colors hover:bg-white/5"
+                    >
+                      <span className="material-symbols-outlined text-[15px] shrink-0" style={{ color: e.type === "dir" ? "#a855f7" : "var(--fg-muted)" }}>
+                        {e.type === "dir" ? "folder" : "description"}
+                      </span>
+                      <span className="truncate flex-1" style={{ color: "var(--fg-secondary)" }}>{e.name}</span>
+                      {e.type !== "dir" && e.size != null && (
+                        <span className="text-[10px] font-[family-name:var(--font-mono)] shrink-0" style={{ color: "var(--fg-muted)" }}>
+                          {e.size > 1024 ? `${(e.size / 1024).toFixed(1)}K` : `${e.size}B`}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {panelTab === "agents" && (
         <div className="flex-1 overflow-y-auto p-2 space-y-2">
           {agentsList.length === 0 && (
             <div className="text-center py-8 px-3">
@@ -1661,7 +1792,10 @@ export default function AgentConversationPage() {
                       {isSel ? "Active" : "Use"}
                     </button>
                   )}
-                  <Link href="/chat/agents" title="Terminal & Files" className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:bg-white/5" style={{ border: "1px solid var(--border)", color: "var(--fg-muted)" }}>
+                  <button onClick={() => openFilesFor(agent)} disabled={agent.status !== "online"} title="Browse files" className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:bg-white/5 disabled:opacity-40" style={{ border: "1px solid var(--border)", color: "var(--fg-muted)" }}>
+                    <span className="material-symbols-outlined text-[13px]">folder</span>
+                  </button>
+                  <Link href="/chat/agents" title="Terminal" className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:bg-white/5" style={{ border: "1px solid var(--border)", color: "var(--fg-muted)" }}>
                     <span className="material-symbols-outlined text-[13px]">terminal</span>
                   </Link>
                   <button onClick={() => disconnectAgent(agent.id)} title="Disconnect" className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:bg-white/5" style={{ border: "1px solid var(--border)", color: "var(--error)" }}>
@@ -1672,6 +1806,7 @@ export default function AgentConversationPage() {
             );
           })}
         </div>
+        )}
 
         <div className="px-3 py-2 shrink-0" style={{ borderTop: "1px solid var(--border)" }}>
           <Link href="/chat/agents" className="flex items-center justify-center gap-1.5 text-[11px] py-1.5 rounded transition-colors hover:bg-white/5 w-full" style={{ color: "var(--fg-secondary)" }}>

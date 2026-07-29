@@ -18,6 +18,7 @@ from app.cache import (
 from app.config import get_settings
 from app.context import build_prompt, build_summary_messages, estimate_tokens, should_summarize
 from app.models import UserProvider
+from app.services.capability_profiles import CapabilityProfile, resolve_profile
 from app.services.providers import resolve_llm_target, chat_completions_url
 from app.db import SessionLocal, get_db
 from app.models import ApiKey, ChatMessage, Conversation, User, UserSettings
@@ -183,17 +184,38 @@ async def chat_sse(
     if not allowed:
         raise HTTPException(status_code=429, detail=f"Rate limited. Retry after {retry_after}s")
 
+    # How much correction this model needs from the harness (fuzzy edits, guards,
+    # text tool-call recovery). Frontier models flow through nearly untouched;
+    # small local ones get the full safety net.
+    profile = resolve_profile(model, is_local)
+
     # Build context
     has_agent = bool(body.agent_id)
+    agent_env = ""
+    if has_agent:
+        from app.models import AgentConnection as AgentConn
+        from app.services.agent_tools import build_environment_block
+        agent_row = db.query(AgentConn).filter(
+            AgentConn.id == body.agent_id,
+            AgentConn.user_id == user.id,
+        ).first()
+        agent_env = build_environment_block(agent_row)
+
     usettings = db.query(UserSettings).filter(UserSettings.user_id == user.id).first()
     memory_scope = "all_chats" if (usettings and getattr(usettings, "cross_chat_memory", False)) else "this_chat"
-    ctx = build_prompt(conv, content, db, agent_tools=has_agent, memory_scope=memory_scope)
+    ctx = build_prompt(conv, content, db, agent_tools=has_agent, memory_scope=memory_scope,
+                       agent_env=agent_env)
 
     http_client = request.app.state.http_client
 
     if has_agent:
+        # A pinned profile temperature only applies to local servers — hosted
+        # reasoning models reject the parameter outright.
+        temperature = body.temperature
+        if is_local and profile.temperature is not None:
+            temperature = profile.temperature
         return StreamingResponse(
-            _agentic_sse_stream(http_client, ctx, model, body.temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, body.agent_id, request),
+            _agentic_sse_stream(http_client, ctx, model, temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, body.agent_id, request, profile),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -416,9 +438,13 @@ async def _llm_stream_with_retry(http_client, url, headers, body, max_retries=3)
     return None
 
 
-async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None, request=None):
+async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None, request=None, profile: CapabilityProfile | None = None):
     from app.routes.agent_poll import execute_tool
-    from app.services.agent_tools import TOOL_DEFINITIONS
+    from app.services.agent_guards import extract_paths, has_read, mark_read, unread_refusal
+    from app.services.agent_tools import TOOL_DEFINITIONS, TOOL_NAMES
+    from app.services.tool_parser import parse_text_calls, strip_tool_call_text
+
+    profile = profile or resolve_profile(model, llm_base is None)
 
     async def _client_gone() -> bool:
         # True when the browser aborted the request (user pressed Esc / closed tab).
@@ -436,7 +462,7 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
     total_prompt = 0
     total_completion = 0
     start_time = time.time()
-    max_turns = 10
+    max_turns = profile.max_turns
     tool_call_history: list[tuple[str, str]] = []
     completed_normally = False
 
@@ -540,6 +566,25 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
             if interrupted:
                 break
 
+            # Small local models often write a tool call out as text — a ```json
+            # fence, <tool_call> tags, a Pythonic call list — instead of emitting
+            # it through the provider's function-calling channel. Recover it and
+            # run it: a turn that would otherwise be wasted describing an action
+            # becomes the action.
+            if not tool_calls_accum and profile.parse_text_toolcalls and raw_content.strip():
+                for i, call in enumerate(parse_text_calls(raw_content, TOOL_NAMES)):
+                    tool_calls_accum[i] = {
+                        "id": f"call_text_{turn}_{i}",
+                        "name": call["name"],
+                        "arguments": json.dumps(call["arguments"]),
+                    }
+                if tool_calls_accum:
+                    raw_content = strip_tool_call_text(raw_content)
+                    # The markup already streamed to the browser. Tell it to drop
+                    # what it has so the transcript shows the tool call rather than
+                    # the JSON blob that encoded it.
+                    yield f"data: {json.dumps({'type': 'content_reset', 'content': raw_content})}\n\n"
+
             # No tool calls — final text response
             if not tool_calls_accum:
                 think_match = re.match(r"^\s*<think>([\s\S]*?)</think>\s*([\s\S]*)$", raw_content)
@@ -596,10 +641,32 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
 
                 yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc_name, 'params': params})}\n\n"
 
-                try:
-                    result = await execute_tool(agent_id, tc_name, params)
-                except Exception as e:
-                    result = {"success": False, "error": str(e)}
+                # Read-before-edit: a model that never read the file is guessing at
+                # old_text, and a guess either wastes the turn or matches the wrong
+                # span. Refuse before dispatching and hand back what to do instead.
+                edit_path = str(params.get("path") or "")
+                if (profile.read_before_edit and tc_name == "edit_file" and edit_path
+                        and not await has_read(conversation_id, edit_path)):
+                    result = {"success": False, "error": unread_refusal(edit_path)}
+                else:
+                    # The profile rides along with the file-writing tools so the
+                    # agent applies this model's fuzz level and write guard. Kept
+                    # out of `params` so what we persist and show is exactly what
+                    # the model asked for, and off the other tools so it can't
+                    # crowd out the command in the agent's logs.
+                    dispatch = params
+                    if tc_name in ("edit_file", "write_file"):
+                        dispatch = {**params, "__policy": profile.tool_policy()}
+                    try:
+                        result = await execute_tool(agent_id, tc_name, dispatch)
+                    except Exception as e:
+                        result = {"success": False, "error": str(e)}
+
+                if result.get("success"):
+                    # A file the model read — or wrote, and so authored — is one it
+                    # may edit without re-reading.
+                    await mark_read(conversation_id,
+                                    extract_paths(tc_name, params, result.get("result")))
 
                 yield f"data: {json.dumps({'type': 'tool_result', 'tool': tc_name, 'success': result.get('success', False), 'result': result.get('result'), 'error': result.get('error'), 'duration_ms': result.get('duration_ms')})}\n\n"
 

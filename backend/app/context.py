@@ -72,6 +72,7 @@ def _build_system_prompt(
     conversation: Conversation,
     rag_context: str = "",
     agent_tools: bool = False,
+    agent_env: str = "",
 ) -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     base = GLOBAL_SYSTEM_PROMPT.format(date=today)
@@ -80,6 +81,10 @@ def _build_system_prompt(
     if agent_tools:
         from app.services.agent_tools import TOOL_SYSTEM_PROMPT
         base += f"\n\n{TOOL_SYSTEM_PROMPT}"
+        # The environment goes last so it sits closest to the conversation — the
+        # concrete facts (cwd, OS) are what the first tool call depends on.
+        if agent_env:
+            base += f"\n\n{agent_env}"
     if rag_context:
         base += f"\n\n## Relevant knowledge\nUse the following context if relevant to the user's question. Cite the source when you use it.\n\n{rag_context}"
     return base
@@ -160,6 +165,7 @@ def build_prompt(
     max_tokens: int | None = None,
     agent_tools: bool = False,
     memory_scope: str = "this_chat",
+    agent_env: str = "",
 ) -> ChatContext:
     if max_tokens is None:
         max_tokens = int(_settings.MAX_MODEL_LEN * 0.75)
@@ -173,7 +179,7 @@ def build_prompt(
         conversation_id=conversation.id, scope=memory_scope,
     )
 
-    system_content = _build_system_prompt(conversation, rag_context, agent_tools)
+    system_content = _build_system_prompt(conversation, rag_context, agent_tools, agent_env)
     sys_tokens = estimate_tokens(system_content)
     system_msgs = [{"role": "system", "content": system_content}]
     budget -= sys_tokens

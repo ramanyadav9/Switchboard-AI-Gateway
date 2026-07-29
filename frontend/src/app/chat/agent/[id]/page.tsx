@@ -1024,6 +1024,13 @@ export default function AgentConversationPage() {
                 if (content) setStreamContent(content);
                 else if (rawContent && parsed.thinking) setStreamContent("");
               }
+            } else if (msg.type === "content_reset") {
+              // The model wrote a tool call out as text instead of calling it. The
+              // backend recovered it and is about to run it, so drop the raw markup
+              // we already streamed and keep only the prose around it.
+              rawContent = msg.content || "";
+              lastFlush = 0;
+              setStreamContent(parseThinkTags(rawContent).content);
             } else if (msg.type === "tool_call") {
               setToolCalls(prev => [...prev, { tool: msg.tool, params: msg.params }]);
               // Live file tree: reflect files the agent creates/edits as it works.

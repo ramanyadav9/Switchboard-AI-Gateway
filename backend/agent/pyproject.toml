@@ -1,6 +1,6 @@
 [project]
 name = "switchboard-agent"
-version = "0.1.0"
+version = "0.3.0"
 description = "Switchboard AI Gateway — Remote Coding Agent"
 requires-python = ">=3.10"
 dependencies = []

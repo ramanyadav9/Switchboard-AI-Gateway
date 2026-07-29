@@ -22,6 +22,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
     tier: Mapped[str] = mapped_column(String, default="free")
+    # Per-user agent-install key, stored encrypted so the one-command install can always
+    # show it (the api_keys table only keeps a hash, which can't be re-displayed).
+    agent_key_encrypted: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 

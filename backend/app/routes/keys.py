@@ -85,6 +85,36 @@ def try_provision_litellm_key(
     return None
 
 
+@router.get("/agent-key")
+def get_agent_key(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Get-or-create the user's retrievable agent-install key, so the agents page can
+    show a ready-to-run install command with the key already baked in (no manual paste)."""
+    from app.services.providers import encrypt_api_key, decrypt_api_key
+    existing = getattr(current_user, "agent_key_encrypted", None)
+    if existing:
+        try:
+            key = decrypt_api_key(existing)
+            return {"key": key, "key_prefix": key[:12]}
+        except Exception:
+            pass  # corrupt/rotated SECRET_KEY → regenerate below
+
+    api_key = generate_api_key()
+    key_id = f"key_{(db.query(func.count(ApiKey.id)).scalar() or 0) + 1}"
+    db.add(ApiKey(
+        id=key_id, user_id=current_user.id, name="Agent",
+        key_hash=hash_api_key(api_key), key_prefix=api_key[:12],
+        models_allowed=[], rpm_limit=None, tpm_limit=None,
+        stt_engine="sensevoice", stt_language="auto", stt_target_language=None,
+        status="active", created_at=datetime.now(timezone.utc),
+    ))
+    current_user.agent_key_encrypted = encrypt_api_key(api_key)
+    db.commit()
+    return {"key": api_key, "key_prefix": api_key[:12]}
+
+
 @router.post("", response_model=KeyCreatedResponse)
 def create_key(
     key_data: KeyCreate,

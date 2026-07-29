@@ -40,6 +40,7 @@ export const auth = {
 
 export const keys = {
   list: () => apiFetch("/me/keys"),
+  agentKey: () => apiFetch("/me/keys/agent-key"),
   create: (name: string, opts?: { models_allowed?: string[]; stt_engine?: string; stt_language?: string; stt_target_language?: string | null }) =>
     apiFetch("/me/keys", {
       method: "POST",

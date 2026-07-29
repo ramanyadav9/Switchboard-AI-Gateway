@@ -117,16 +117,11 @@ export default function AgentsPage() {
   }, [toast]);
 
   const loadApiKey = useCallback(() => {
+    // Auto-provision (get-or-create) the user's retrievable agent key, so the install
+    // command is ready with the key baked in — no manual key creation or pasting.
     keys
-      .list()
-      .then((data: ApiKey[]) => {
-        const list = Array.isArray(data) ? data : [];
-        if (list.length > 0) {
-          setApiKey(list[0].key_prefix);
-        } else {
-          setApiKey(null);
-        }
-      })
+      .agentKey()
+      .then((data: { key?: string }) => setApiKey(data?.key || null))
       .catch(() => setApiKey(null))
       .finally(() => setApiKeyLoading(false));
   }, []);
@@ -406,49 +401,37 @@ export default function AgentsPage() {
           </button>
         </div>
 
-        {/* Manual install */}
+        {/* Connect command — key already baked in, ready to run */}
         <div>
-          <p className="text-[12px] mb-1.5" style={{ color: "var(--fg-muted)" }}>
-            Or install manually:
+          <p className="text-[12px] mb-1.5 flex items-center gap-1" style={{ color: "var(--fg-muted)" }}>
+            Then connect — <span style={{ color: "var(--success)" }}>your key is already filled in, just run it:</span>
           </p>
-          <pre
-            className="border rounded px-3 py-2 text-[12px] leading-[20px] font-[family-name:var(--font-mono)] overflow-x-auto"
-            style={{ background: "var(--code-bg)", borderColor: "var(--border)", color: "var(--fg-secondary)" }}
-          >
-{`pip install switchboard-agent
-switchboard-agent connect ${serverUrl || "YOUR_SERVER"} --key YOUR_KEY`}
-          </pre>
+          {apiKeyLoading ? (
+            <div className="border rounded px-3 py-3 flex items-center gap-2" style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}>
+              <Spinner /> <span className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Preparing your install command…</span>
+            </div>
+          ) : (() => {
+            const connectCmd = `pip install switchboard-agent\nswitchboard-agent connect ${serverUrl || "YOUR_SERVER"} --key ${apiKey || "YOUR_KEY"}`;
+            return (
+              <div className="flex items-start gap-2 border rounded px-3 py-2.5" style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}>
+                <pre className="flex-1 text-[12px] leading-[20px] font-[family-name:var(--font-mono)] overflow-x-auto whitespace-pre" style={{ color: "var(--fg-secondary)" }}>{connectCmd}</pre>
+                <button
+                  onClick={() => { copyText(connectCmd, setCopiedKey); toast("Connect command copied", "success"); }}
+                  className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1 shrink-0"
+                >
+                  <span className="material-symbols-outlined text-[14px]">{copiedKey ? "check" : "content_copy"}</span>
+                  {copiedKey ? "Copied" : "Copy"}
+                </button>
+              </div>
+            );
+          })()}
+          <p className="text-[11px] mt-1.5" style={{ color: "var(--fg-muted)" }}>
+            Runs on Linux, macOS, WSL, and Windows. After it connects, approve the device below — one click, and you&rsquo;re set.
+          </p>
         </div>
 
-        {/* API Key */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[13px]" style={{ color: "var(--fg-secondary)" }}>
-            Your API key:
-          </span>
-          {apiKeyLoading ? (
-            <Spinner />
-          ) : apiKey ? (
-            <div className="flex items-center gap-2">
-              <code
-                className="font-[family-name:var(--font-mono)] text-[13px] px-2 py-0.5 rounded border"
-                style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}
-              >
-                {apiKey}
-              </code>
-              <button
-                onClick={() => {
-                  copyText(apiKey, setCopiedKey);
-                  toast("API key copied", "success");
-                }}
-                className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1"
-              >
-                <span className="material-symbols-outlined text-[14px]">
-                  {copiedKey ? "check" : "content_copy"}
-                </span>
-                {copiedKey ? "Copied" : "Copy"}
-              </button>
-            </div>
-          ) : (
+        {false && (
+          <div className="flex items-center gap-3 flex-wrap">
             <a
               href="/dashboard/keys"
               className="text-[13px] flex items-center gap-1 transition-colors hover:opacity-80"
@@ -457,8 +440,8 @@ switchboard-agent connect ${serverUrl || "YOUR_SERVER"} --key YOUR_KEY`}
               <span className="material-symbols-outlined text-[14px]">add</span>
               Create an API key first
             </a>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Empty State */}

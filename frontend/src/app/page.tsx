@@ -134,7 +134,7 @@ export default function Landing() {
                           smart_toy
                         </span>
                       </div>
-                      <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>Qwen3-14B</span>
+                      <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>Switchboard</span>
                     </div>
                     <div
                       className="px-4 py-3 rounded-2xl text-sm leading-relaxed"
@@ -351,7 +351,7 @@ client = OpenAI({"\n"}
 {"  "}api_key=<span style={{ color: "var(--syn-string)" }}>&quot;sk-...&quot;</span>{"\n"}
 ){"\n\n"}
 r = client.chat.completions.create({"\n"}
-{"  "}model=<span style={{ color: "var(--syn-string)" }}>&quot;Qwen3-14B&quot;</span>,{"\n"}
+{"  "}model=<span style={{ color: "var(--syn-string)" }}>&quot;your-model&quot;</span>,{"\n"}
 {"  "}messages=[&#123;<span style={{ color: "var(--syn-string)" }}>&quot;role&quot;</span>:{" "}
 <span style={{ color: "var(--syn-string)" }}>&quot;user&quot;</span>,{"\n"}
 {"               "}<span style={{ color: "var(--syn-string)" }}>&quot;content&quot;</span>:{" "}
@@ -502,7 +502,7 @@ r = client.chat.completions.create({"\n"}
                   └── /ws/*       → WebSocket STT
 
   Internal (Docker bridge network):
-    Backend ─┬── vLLM        :8000  (Qwen3-14B)
+    Backend ─┬── vLLM        :8000  (your model)
              ├── Whisper      :8004  (batch STT)
              ├── SenseVoice   :8006  (live STT)
              ├── PostgreSQL   (data)

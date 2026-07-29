@@ -557,6 +557,7 @@ export default function SettingsPage() {
 
   /* ---- group models by provider for the Default Model picker (local first) ---- */
   const NON_CHAT_MODEL = /embed|moderation|ocr|-tts|transcribe|realtime|-fim/i;
+  const localModelNames = allModels.filter((m) => m.provider === "local").map((m) => m.id);
   const modelGroups = (() => {
     const byProv = new Map<string, ModelEntry[]>();
     for (const m of allModels.filter((m) => !NON_CHAT_MODEL.test(m.id))) {
@@ -566,7 +567,7 @@ export default function SettingsPage() {
     const order = ["local", ...[...byProv.keys()].filter((k) => k !== "local").sort()];
     return order.filter((k) => byProv.has(k)).map((k) => ({
       key: k,
-      label: k === "local" ? "Local GPU" : byProv.get(k)![0].name || k,
+      label: k === "local" ? "Switchboard" : byProv.get(k)![0].name || k,
       items: byProv.get(k)!,
     }));
   })();
@@ -783,12 +784,12 @@ export default function SettingsPage() {
           </div>
 
           <div className="flex flex-col gap-3">
-            {/* Local GPU card — always present */}
+            {/* Switchboard (built-in) model card — always present */}
             <div className="t-card rounded-lg p-4">
               <div className="flex items-center justify-between gap-3 mb-1">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-[20px]" style={{ color: "var(--success)" }}>bolt</span>
-                  <span className="text-[14px] font-semibold">Local GPU</span>
+                  <span className="text-[14px] font-semibold">Switchboard</span>
                 </div>
                 <span
                   className="font-[family-name:var(--font-mono)] text-[10px] tracking-[0.05em] font-bold uppercase px-2 py-0.5 rounded"
@@ -798,7 +799,7 @@ export default function SettingsPage() {
                 </span>
               </div>
               <div className="text-[12px]" style={{ color: "var(--fg-secondary)" }}>
-                Qwen3-14B via vLLM
+                {localModelNames.length ? localModelNames.join(", ") : "Built-in model on your hardware"}
               </div>
               <div className="text-[11px] mt-1" style={{ color: "var(--fg-muted)" }}>
                 No API key needed

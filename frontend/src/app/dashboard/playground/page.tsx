@@ -114,8 +114,8 @@ function ChatPlayground({ configOpen, setConfigOpen }: { configOpen: boolean; se
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
-  const [model, setModel] = useState("Qwen3-14B");
-  const [models, setModels] = useState<string[]>(["Qwen3-14B"]);
+  const [model, setModel] = useState("");
+  const [models, setModels] = useState<string[]>([]);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [temperature, setTemperature] = useState(0.7);
   const [maxLength, setMaxLength] = useState(2048);

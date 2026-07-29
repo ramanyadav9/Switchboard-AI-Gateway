@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { keys } from "@/lib/api";
+import { keys, models as modelsApi } from "@/lib/api";
 import { useToast } from "@/components/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 
@@ -12,6 +12,13 @@ function CodeSnippets({ apiKey }: { apiKey: string }) {
   const [mode, setMode] = useState<SnippetMode>("chat");
   const [lang, setLang] = useState<SnippetLang>("curl");
   const [copied, setCopied] = useState(false);
+  const [modelName, setModelName] = useState("your-model");
+
+  useEffect(() => {
+    modelsApi.list()
+      .then((res: { data?: { id: string }[] }) => { const id = res?.data?.[0]?.id; if (id) setModelName(id); })
+      .catch(() => {});
+  }, []);
 
   const BASE_URL = typeof window !== "undefined" ? window.location.origin : "https://your-server";
   const WS_URL = BASE_URL.replace(/^http/, "ws");
@@ -22,7 +29,7 @@ function CodeSnippets({ apiKey }: { apiKey: string }) {
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "Qwen3-14B",
+    "model": "${modelName}",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'`,
       python: `from openai import OpenAI
@@ -33,7 +40,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="Qwen3-14B",
+    model="${modelName}",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)`,
@@ -45,7 +52,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: "Qwen3-14B",
+  model: "${modelName}",
   messages: [{ role: "user", content: "Hello!" }],
 });
 console.log(response.choices[0].message.content);`,

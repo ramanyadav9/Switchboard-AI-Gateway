@@ -377,7 +377,7 @@ function groupModels(models: ProviderModel[]) {
   const order = ["local", ...[...byProv.keys()].filter((k) => k !== "local").sort()];
   return order.filter((k) => byProv.has(k)).map((k) => ({
     key: k,
-    label: k === "local" ? "Local GPU" : byProv.get(k)![0].name || k,
+    label: k === "local" ? "Switchboard" : byProv.get(k)![0].name || k,
     items: byProv.get(k)!,
   }));
 }

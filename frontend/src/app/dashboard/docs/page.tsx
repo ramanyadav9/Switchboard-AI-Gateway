@@ -136,7 +136,7 @@ export default function DocsPage() {
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $SWITCHBOARD_API_KEY" \\
   -d '{
-    "model": "Qwen3-14B",
+    "model": "your-model",
     "messages": [
       {
         "role": "system",

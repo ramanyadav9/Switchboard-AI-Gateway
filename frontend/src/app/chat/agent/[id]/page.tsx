@@ -981,6 +981,7 @@ export default function AgentConversationPage() {
       let buffer = "";
       let rawContent = "";
       let rawThinking = "";
+      let lastFlush = 0;
 
       while (true) {
         if (controller.signal.aborted) break;
@@ -1001,13 +1002,18 @@ export default function AgentConversationPage() {
               if (msg.content) rawContent += msg.content;
               if (msg.reasoning) rawThinking += msg.reasoning;
 
-              const parsed = parseThinkTags(rawContent);
-              const thinking = rawThinking || parsed.thinking;
-              const content = parsed.content;
-
-              if (thinking) setStreamThinking(thinking);
-              if (content) setStreamContent(content);
-              else if (rawContent && parsed.thinking) setStreamContent("");
+              // Throttle to ~15fps: re-parsing the whole growing message on every token
+              // is O(n^2) and lags long answers. The final content comes from the reload.
+              const now = Date.now();
+              if (now - lastFlush > 66) {
+                lastFlush = now;
+                const parsed = parseThinkTags(rawContent);
+                const thinking = rawThinking || parsed.thinking;
+                const content = parsed.content;
+                if (thinking) setStreamThinking(thinking);
+                if (content) setStreamContent(content);
+                else if (rawContent && parsed.thinking) setStreamContent("");
+              }
             } else if (msg.type === "tool_call") {
               setToolCalls(prev => [...prev, { tool: msg.tool, params: msg.params }]);
               // Live file tree: reflect files the agent creates/edits as it works.
@@ -1197,6 +1203,7 @@ export default function AgentConversationPage() {
       let buffer = "";
       let rawContent = "";
       let rawThinking = "";
+      let lastFlush = 0;
 
       while (true) {
         if (controller.signal.aborted) break;
@@ -1214,9 +1221,13 @@ export default function AgentConversationPage() {
             if (msg.type === "token") {
               if (msg.content) rawContent += msg.content;
               if (msg.reasoning) rawThinking += msg.reasoning;
-              const parsed = parseThinkTags(rawContent);
-              if (rawThinking || parsed.thinking) setStreamThinking(rawThinking || parsed.thinking);
-              if (parsed.content) setStreamContent(parsed.content);
+              const now = Date.now();
+              if (now - lastFlush > 66) {
+                lastFlush = now;
+                const parsed = parseThinkTags(rawContent);
+                if (rawThinking || parsed.thinking) setStreamThinking(rawThinking || parsed.thinking);
+                if (parsed.content) setStreamContent(parsed.content);
+              }
             } else if (msg.type === "done") {
               const parsed = parseThinkTags(rawContent);
               const sourcesFooter = "\n\n---\n**Sources:**\n" + results.map((r: { title: string; url: string }, i: number) =>

@@ -10,10 +10,31 @@ from app.routes import agent_poll, agents, auth, chat, conversations, keys, prox
 
 cfg = get_settings()
 
+_DEFAULT_SECRET = "your-secret-key-change-in-production"
+
+
+def _guard_secret_key():
+    """SECRET_KEY signs auth tokens AND derives the encryption key for stored provider
+    keys. Shipping the built-in default in production would let anyone forge logins and
+    decrypt every user's keys — so refuse to start. In DEBUG we only warn."""
+    import logging
+    log = logging.getLogger("switchboard")
+    if cfg.SECRET_KEY == _DEFAULT_SECRET:
+        if cfg.DEBUG:
+            log.warning("SECURITY: SECRET_KEY is the default placeholder. Set a strong "
+                        "SECRET_KEY before deploying (fine for local DEBUG only).")
+        else:
+            raise RuntimeError(
+                "SECRET_KEY is still the default placeholder in a non-DEBUG deployment. "
+                "Set a strong, random SECRET_KEY (e.g. `openssl rand -hex 32`) — it "
+                "protects login tokens and encrypts stored provider keys. Refusing to start."
+            )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
+    _guard_secret_key()
     init_db()
     app.state.http_client = httpx.AsyncClient(
         limits=httpx.Limits(max_connections=500, max_keepalive_connections=50),

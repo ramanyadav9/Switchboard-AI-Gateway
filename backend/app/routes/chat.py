@@ -282,7 +282,9 @@ async def _sse_stream(http_client, ctx, model, temperature, max_tokens, conversa
                             completion_tokens = usage.get("completion_tokens", 0)
 
                         c = delta.get("content", "")
-                        r = delta.get("reasoning_content", "")
+                        # vLLM reasoning parsers vary: some emit `reasoning_content`,
+                        # others `reasoning`. Accept either so the thinking UI always fires.
+                        r = delta.get("reasoning_content") or delta.get("reasoning") or ""
                         if c or r:
                             evt: dict = {"type": "token"}
                             if c:
@@ -501,7 +503,9 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
                                 total_completion += usage.get("completion_tokens", 0)
 
                             c = delta.get("content", "")
-                            r = delta.get("reasoning_content", "")
+                            # vLLM reasoning parsers vary: some emit `reasoning_content`,
+                            # others `reasoning`. Accept either so the thinking UI fires.
+                            r = delta.get("reasoning_content") or delta.get("reasoning") or ""
                             if c or r:
                                 evt: dict = {"type": "token"}
                                 if c:
@@ -668,14 +672,17 @@ async def _non_streaming(http_client, ctx, model, temperature, max_tokens, conve
             raise HTTPException(status_code=response.status_code, detail=response.text)
 
         result = response.json()
-        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        message = result.get("choices", [{}])[0].get("message", {})
+        text = message.get("content", "") or ""
         usage = result.get("usage", {})
 
-        thinking = None
-        think_match = re.match(r"^\s*<think>([\s\S]*?)</think>\s*([\s\S]*)$", text)
-        if think_match:
-            thinking = think_match.group(1).strip()
-            text = think_match.group(2).strip()
+        # Reasoning parsers return thinking in a separate field; fall back to inline <think>.
+        thinking = message.get("reasoning_content") or message.get("reasoning") or None
+        if not thinking:
+            think_match = re.match(r"^\s*<think>([\s\S]*?)</think>\s*([\s\S]*)$", text)
+            if think_match:
+                thinking = think_match.group(1).strip()
+                text = think_match.group(2).strip()
 
         user_tokens = estimate_tokens(user_content)
         assistant_tokens = usage.get("completion_tokens", 0) or estimate_tokens(text)

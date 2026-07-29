@@ -308,7 +308,14 @@ export default function AgentsPage() {
   const hasAnyAgents = agentList.length > 0;
 
   const serverUrl = typeof window !== "undefined" ? window.location.origin : "";
-  const installCmd = `curl -fsSL ${serverUrl}/api/install | bash`;
+  // Full commands (for copy) install AND connect in one shot via the key env var, which
+  // both install scripts honor. Masked versions are shown so the key isn't left on screen.
+  const fullKey = apiKey || "YOUR_KEY";
+  const maskKey = apiKey ? apiKey.slice(0, 7) + "•".repeat(16) : "YOUR_KEY";
+  const nixCmd = `curl -fsSL ${serverUrl}/api/install | SWITCHBOARD_KEY=${fullKey} bash`;
+  const nixCmdMasked = `curl -fsSL ${serverUrl}/api/install | SWITCHBOARD_KEY=${maskKey} bash`;
+  const winCmd = `$env:SWITCHBOARD_KEY="${fullKey}"; irm ${serverUrl}/api/install.ps1 | iex`;
+  const winCmdMasked = `$env:SWITCHBOARD_KEY="${maskKey}"; irm ${serverUrl}/api/install.ps1 | iex`;
 
   return (
     <div className="max-w-[1280px] mx-auto w-full flex flex-col gap-4">
@@ -376,59 +383,47 @@ export default function AgentsPage() {
         </div>
 
         <p className="text-[13px]" style={{ color: "var(--fg-secondary)" }}>
-          Install the agent on any machine:
+          One command installs the agent and links it to your account — the key is already
+          filled in. Pick your OS, copy, and run it:
         </p>
 
-        {/* Curl command */}
-        <div
-          className="flex items-center gap-2 border rounded px-3 py-2.5 font-[family-name:var(--font-mono)] text-[13px]"
-          style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}
-        >
-          <span className="flex-1 overflow-x-auto whitespace-nowrap select-all" style={{ color: "var(--fg-secondary)" }}>
-            {installCmd}
-          </span>
-          <button
-            onClick={() => {
-              copyText(installCmd, setCopiedInstall);
-              toast("Install command copied", "success");
-            }}
-            className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1 shrink-0"
-          >
-            <span className="material-symbols-outlined text-[14px]">
-              {copiedInstall ? "check" : "content_copy"}
-            </span>
-            {copiedInstall ? "Copied" : "Copy"}
-          </button>
-        </div>
-
-        {/* Connect command — key already baked in, ready to run */}
-        <div>
-          <p className="text-[12px] mb-1.5 flex items-center gap-1" style={{ color: "var(--fg-muted)" }}>
-            Then connect — <span style={{ color: "var(--success)" }}>your key is already filled in, just run it:</span>
-          </p>
-          {apiKeyLoading ? (
-            <div className="border rounded px-3 py-3 flex items-center gap-2" style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}>
-              <Spinner /> <span className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Preparing your install command…</span>
+        {apiKeyLoading ? (
+          <div className="border rounded px-3 py-3 flex items-center gap-2" style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}>
+            <Spinner /> <span className="text-[12px]" style={{ color: "var(--fg-muted)" }}>Preparing your install command…</span>
+          </div>
+        ) : (
+          <>
+            {/* Linux / macOS / WSL */}
+            <div>
+              <p className="text-[11px] mb-1 font-[family-name:var(--font-mono)] tracking-[0.06em] uppercase" style={{ color: "var(--fg-muted)" }}>Linux · macOS · WSL</p>
+              <div className="flex items-center gap-2 border rounded px-3 py-2.5" style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}>
+                <span className="flex-1 overflow-x-auto whitespace-nowrap font-[family-name:var(--font-mono)] text-[13px]" style={{ color: "var(--fg-secondary)" }}>{nixCmdMasked}</span>
+                <button onClick={() => { copyText(nixCmd, setCopiedInstall); toast("Install command copied", "success"); }} className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1 shrink-0">
+                  <span className="material-symbols-outlined text-[14px]">{copiedInstall ? "check" : "content_copy"}</span>
+                  {copiedInstall ? "Copied" : "Copy"}
+                </button>
+              </div>
             </div>
-          ) : (() => {
-            const connectCmd = `pip install switchboard-agent\nswitchboard-agent connect ${serverUrl || "YOUR_SERVER"} --key ${apiKey || "YOUR_KEY"}`;
-            return (
-              <div className="flex items-start gap-2 border rounded px-3 py-2.5" style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}>
-                <pre className="flex-1 text-[12px] leading-[20px] font-[family-name:var(--font-mono)] overflow-x-auto whitespace-pre" style={{ color: "var(--fg-secondary)" }}>{connectCmd}</pre>
-                <button
-                  onClick={() => { copyText(connectCmd, setCopiedKey); toast("Connect command copied", "success"); }}
-                  className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1 shrink-0"
-                >
+
+            {/* Windows PowerShell */}
+            <div>
+              <p className="text-[11px] mb-1 font-[family-name:var(--font-mono)] tracking-[0.06em] uppercase" style={{ color: "var(--fg-muted)" }}>Windows (PowerShell)</p>
+              <div className="flex items-center gap-2 border rounded px-3 py-2.5" style={{ background: "var(--code-bg)", borderColor: "var(--border)" }}>
+                <span className="flex-1 overflow-x-auto whitespace-nowrap font-[family-name:var(--font-mono)] text-[13px]" style={{ color: "var(--fg-secondary)" }}>{winCmdMasked}</span>
+                <button onClick={() => { copyText(winCmd, setCopiedKey); toast("Install command copied", "success"); }} className="t-btn-ghost text-[12px] px-2 py-1 rounded transition-colors flex items-center gap-1 shrink-0">
                   <span className="material-symbols-outlined text-[14px]">{copiedKey ? "check" : "content_copy"}</span>
                   {copiedKey ? "Copied" : "Copy"}
                 </button>
               </div>
-            );
-          })()}
-          <p className="text-[11px] mt-1.5" style={{ color: "var(--fg-muted)" }}>
-            Runs on Linux, macOS, WSL, and Windows. After it connects, approve the device below — one click, and you&rsquo;re set.
-          </p>
-        </div>
+              <p className="text-[11px] mt-1" style={{ color: "var(--fg-muted)" }}>Run in <b>PowerShell</b> (not cmd.exe). Requires Python 3.</p>
+            </div>
+
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--fg-muted)" }}>
+              Then start it with <code className="font-[family-name:var(--font-mono)]">switchboard-agent run</code> and approve the device below — one click, and you&rsquo;re set.
+              <span className="ml-1" style={{ color: "var(--success)" }}>Your key is hidden here but included when you copy.</span>
+            </p>
+          </>
+        )}
 
         {false && (
           <div className="flex items-center gap-3 flex-wrap">

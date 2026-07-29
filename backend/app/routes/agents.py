@@ -223,13 +223,16 @@ def get_install_script(request: Request):
 
 
 @install_router.get("/install.ps1", response_class=PlainTextResponse)
-def get_install_script_ps1():
+def get_install_script_ps1(request: Request):
     script_path = os.path.join(os.path.dirname(__file__), "..", "..", "agent", "install.ps1")
     script_path = os.path.normpath(script_path)
     if not os.path.isfile(script_path):
         raise HTTPException(status_code=404, detail="Install script not found")
     with open(script_path, "r", encoding="utf-8") as f:
-        return PlainTextResponse(content=f.read(), media_type="text/x-powershell")
+        content = f.read()
+    origin = f"{request.url.scheme}://{request.url.netloc}"
+    content = content.replace("__SERVER_URL__", origin)
+    return PlainTextResponse(content=content, media_type="text/x-powershell")
 
 
 @install_router.get("/agent-source")

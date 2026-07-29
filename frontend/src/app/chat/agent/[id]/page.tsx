@@ -941,6 +941,16 @@ export default function AgentConversationPage() {
     if (nearBottom) el.scrollTo({ top: el.scrollHeight });
   }, [messages, streamContent, streamThinking]);
 
+  // When a response finishes (streaming ends), snap to the end so the new complete
+  // answer is fully visible — even if the user scrolled up while it was generating.
+  useEffect(() => {
+    if (streaming) return;
+    const t = setTimeout(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [streaming]);
+
   async function send() {
     if (!input.trim() || streaming) return;
     const userMsg: Message = { role: "user", content: input };

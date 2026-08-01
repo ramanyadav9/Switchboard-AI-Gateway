@@ -76,7 +76,18 @@ export const conversations = {
     apiFetch(`/me/conversations/${id}/messages?limit=${limit}${before ? `&before=${before}` : ""}`),
 };
 
-export function chatStream(body: { conversation_id: string; content: string; display_content?: string; model?: string; temperature?: number; max_tokens?: number; agent_id?: string }) {
+export const permissions = {
+  // Answer a permission request the agent loop raised mid-turn. The loop is
+  // blocked waiting on this, so it must be sent for the turn to continue.
+  // `message` on a reject reaches the model as its next instruction.
+  reply: (requestId: string, reply: "once" | "always" | "reject", message?: string) =>
+    apiFetch(`/me/permissions/${requestId}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ reply, message: message || null }),
+    }),
+};
+
+export function chatStream(body: { conversation_id: string; content: string; display_content?: string; model?: string; temperature?: number; max_tokens?: number; agent_id?: string; agent_mode?: string }) {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   return fetch(`${API_BASE}/me/chat`, {
     method: "POST",

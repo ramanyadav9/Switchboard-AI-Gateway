@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { conversations, chatStream, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi, usage as usageApi, providers as providersApi } from "@/lib/api";
+import { conversations, chatStream, skills as skillsApi, research as researchApi, search as searchApi, agents as agentsApi, usage as usageApi, providers as providersApi, permissions as permissionsApi } from "@/lib/api";
 import { copyToClipboard } from "@/lib/clipboard";
 
 // Daily request budget — kept in sync with the sidebar usage ring (layout.tsx).
@@ -396,6 +396,126 @@ function DiffView({ diff }: { diff: DiffLine[] }) {
   );
 }
 
+// The agent's three modes. Ordered least to most restrictive so the control
+// reads as a dial rather than an arbitrary list.
+const AGENT_MODES = [
+  { id: "auto", label: "Auto", icon: "bolt",
+    hint: "Runs on its own. Asks before deleting, pushing, or reading secrets." },
+  { id: "manual", label: "Manual", icon: "front_hand",
+    hint: "Reads freely. Asks before every change and every command." },
+  { id: "readonly", label: "Read-only", icon: "visibility",
+    hint: "Explores and explains. Cannot edit files or run commands." },
+] as const;
+
+type PendingPermission = {
+  id: string; tool: string; params: Record<string, string>;
+  permission: string; pattern: string; mode: string;
+};
+
+// The approval prompt. Shown inline where the tool call would appear, because
+// the decision is about *this* step of the work — putting it in a modal would
+// divorce it from the context the user needs to judge it.
+function PermissionPrompt({ req, onReply }: {
+  req: PendingPermission;
+  onReply: (reply: "once" | "always" | "reject", message?: string) => void;
+}) {
+  const [message, setMessage] = useState("");
+  const [showMessage, setShowMessage] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  function reply(kind: "once" | "always" | "reject") {
+    if (sent) return;
+    setSent(true);
+    onReply(kind, kind === "reject" ? message.trim() || undefined : undefined);
+  }
+
+  const isEdit = req.tool === "edit_file";
+  const isWrite = req.tool === "write_file";
+  const diff = isEdit
+    ? diffLines(String(req.params.old_text ?? ""), String(req.params.new_text ?? ""))
+    : isWrite
+      ? diffLines("", String(req.params.content ?? ""))
+      : [];
+
+  // What exactly is being asked for. A filename alone isn't enough to approve
+  // an edit, so show the change itself; for bash, show the whole command.
+  const target = req.tool === "bash" ? String(req.params.command ?? "") : String(req.params.path ?? "");
+  const reason = req.tool === "bash"
+    ? `Runs a command on your machine`
+    : isEdit || isWrite
+      ? `Changes a file on your machine`
+      : `Reads a file that may contain credentials`;
+
+  return (
+    <div className="my-1.5 rounded-lg overflow-hidden animate-fade-in"
+      style={{ border: "1px solid var(--accent)", background: "var(--bg-muted)" }}>
+      <div className="flex items-center gap-2 px-3 py-2 text-[12px]">
+        <span className="material-symbols-outlined text-[15px]" style={{ color: "var(--accent)" }}>
+          shield_question
+        </span>
+        <span className="font-semibold" style={{ color: "var(--fg)" }}>Permission needed</span>
+        <span className="font-[family-name:var(--font-mono)] text-[11px] px-1.5 py-0.5 rounded"
+          style={{ color: "var(--fg-muted)", background: "var(--bg)" }}>{req.tool}</span>
+        <span className="ml-auto text-[11px]" style={{ color: "var(--fg-muted)" }}>{reason}</span>
+      </div>
+
+      {target && (
+        <div className="px-3 pb-2 font-[family-name:var(--font-mono)] text-[12px] break-all"
+          style={{ color: "var(--code-fg)" }}>
+          {req.tool === "bash" ? `$ ${target}` : target}
+        </div>
+      )}
+
+      {diff.length > 0 && (
+        <div className="px-3 pb-2 font-[family-name:var(--font-mono)] text-[11px] leading-[17px]">
+          <DiffView diff={diff} />
+        </div>
+      )}
+
+      {showMessage && (
+        <div className="px-3 pb-2">
+          <input
+            autoFocus
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") reply("reject"); }}
+            placeholder="Tell it what to do instead (optional)"
+            className="w-full px-2 py-1.5 rounded text-[12px] outline-none"
+            style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--fg)" }}
+          />
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: "1px solid var(--border)" }}>
+        <button onClick={() => reply("once")} disabled={sent}
+          className="px-3 py-1.5 rounded text-[12px] font-medium transition-opacity disabled:opacity-50"
+          style={{ background: "var(--accent)", color: "var(--accent-fg, #fff)" }}>
+          Allow once
+        </button>
+        <button onClick={() => reply("always")} disabled={sent}
+          className="px-3 py-1.5 rounded text-[12px] transition-opacity disabled:opacity-50"
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--fg)" }}
+          title={req.tool === "bash"
+            ? `Stops asking for similar commands in this chat`
+            : `Stops asking for this file in this chat`}>
+          Always
+        </button>
+        <button
+          onClick={() => (showMessage ? reply("reject") : setShowMessage(true))}
+          disabled={sent}
+          className="px-3 py-1.5 rounded text-[12px] transition-opacity disabled:opacity-50 ml-auto"
+          style={{ background: "var(--bg)", border: "1px solid var(--error)", color: "var(--error)" }}>
+          {showMessage ? "Send rejection" : "Reject"}
+        </button>
+      </div>
+
+      {sent && (
+        <div className="px-3 pb-2 text-[11px]" style={{ color: "var(--fg-muted)" }}>Sending…</div>
+      )}
+    </div>
+  );
+}
+
 function ToolCallBlock({ tool, params, result, error, success, duration, isLive }: {
   tool: string; params: Record<string, string>;
   result?: unknown; error?: string; success?: boolean; duration?: number; isLive?: boolean;
@@ -707,6 +827,20 @@ export default function AgentConversationPage() {
   const [chLoading, setChLoading] = useState(false);
   const [chDiff, setChDiff] = useState<{ path: string; lines: DiffLine[] } | null>(null);
   const [toolCalls, setToolCalls] = useState<{tool: string; params: Record<string, string>; result?: unknown; error?: string; success?: boolean; duration?: number}[]>([]);
+  const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
+  const [showModePicker, setShowModePicker] = useState(false);
+  // Persisted per browser, not per conversation: the mode is a statement about
+  // how much you trust the agent right now, and re-picking it every chat is the
+  // kind of friction that makes people leave it on the most permissive setting.
+  const [agentMode, setAgentMode] = useState<string>("auto");
+  useEffect(() => {
+    const saved = localStorage.getItem("agentMode");
+    if (saved && AGENT_MODES.some(m => m.id === saved)) setAgentMode(saved);
+  }, []);
+  function changeMode(m: string) {
+    setAgentMode(m);
+    localStorage.setItem("agentMode", m);
+  }
   const [showSlashCommands, setShowSlashCommands] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelected, setSlashSelected] = useState(0);
@@ -969,6 +1103,7 @@ export default function AgentConversationPage() {
         conversation_id: id,
         content: userMsg.content,
         agent_id: selectedAgent?.id,
+        agent_mode: agentMode,
         ...(selectedModel && selectedModel !== model ? { model: selectedModel } : {}),
       });
 
@@ -1031,6 +1166,15 @@ export default function AgentConversationPage() {
               rawContent = msg.content || "";
               lastFlush = 0;
               setStreamContent(parseThinkTags(rawContent).content);
+            } else if (msg.type === "permission_request") {
+              // The backend turn is blocked on our answer. Nothing else arrives
+              // until we reply, so surfacing this immediately matters.
+              setPendingPermission({
+                id: msg.id, tool: msg.tool, params: msg.params || {},
+                permission: msg.permission, pattern: msg.pattern, mode: msg.mode,
+              });
+            } else if (msg.type === "permission_resolved") {
+              setPendingPermission(prev => (prev && prev.id === msg.id ? null : prev));
             } else if (msg.type === "tool_call") {
               setToolCalls(prev => [...prev, { tool: msg.tool, params: msg.params }]);
               // Live file tree: reflect files the agent creates/edits as it works.
@@ -1047,6 +1191,9 @@ export default function AgentConversationPage() {
               setStreamContent("");
               setStreamThinking("");
               setToolCalls([]);
+              // The turn ended (possibly because a request timed out server-side);
+              // an approval prompt for it is no longer answerable.
+              setPendingPermission(null);
               refreshTree(); // final sync of the file tree after the turn
               conversations.get(id).then((data) => {
                 setMessages(
@@ -1075,6 +1222,7 @@ export default function AgentConversationPage() {
                 ...updated,
                 { role: "assistant", content: `Error: ${msg.text}` },
               ]);
+              setPendingPermission(null);
               setStreamContent("");
               setStreamThinking("");
               setToolCalls([]);
@@ -1118,9 +1266,26 @@ export default function AgentConversationPage() {
     setStreamContent("");
     setStreamThinking("");
     setToolCalls([]);
+    setPendingPermission(null);
     setStreaming(false);
   }
   stopRef.current = stop;
+
+  // The backend turn is parked on a Redis BRPOP waiting for this. If it never
+  // arrives the request times out server-side and is treated as a refusal, so
+  // a failed POST degrades to "denied" rather than hanging the agent — but tell
+  // the user, because a silent 300s stall would be baffling.
+  async function replyToPermission(reply: "once" | "always" | "reject", message?: string) {
+    const req = pendingPermission;
+    if (!req) return;
+    try {
+      await permissionsApi.reply(req.id, reply, message);
+    } catch {
+      toast("Couldn't send that decision — the agent will treat it as declined", "error");
+    } finally {
+      setPendingPermission(null);
+    }
+  }
 
   async function sendResearch() {
     if (!input.trim() || streaming) return;
@@ -1593,6 +1758,14 @@ export default function AgentConversationPage() {
               </div>
             </div>
           )}
+          {/* Blocking approval — the turn is paused until this is answered. */}
+          {pendingPermission && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] w-full">
+                <PermissionPrompt req={pendingPermission} onReply={replyToPermission} />
+              </div>
+            </div>
+          )}
           {streaming && (streamContent || streamThinking) && (
             <div className="flex justify-start animate-fade-in">
               <div className="max-w-[85%]">
@@ -1860,6 +2033,50 @@ export default function AgentConversationPage() {
                   </div>
                 )}
               </div>
+
+              {/* Permission mode — only meaningful with an agent attached, so it
+                  appears alongside the agent rather than cluttering plain chat. */}
+              {selectedAgent && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowModePicker(!showModePicker)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                    style={agentMode === "auto"
+                      ? { color: "var(--fg-muted)" }
+                      : { color: "var(--accent)", background: "var(--bg-muted)" }}
+                    title={AGENT_MODES.find(m => m.id === agentMode)?.hint}
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      {AGENT_MODES.find(m => m.id === agentMode)?.icon}
+                    </span>
+                    <span className="hidden sm:inline">
+                      {AGENT_MODES.find(m => m.id === agentMode)?.label}
+                    </span>
+                  </button>
+                  {showModePicker && (
+                    <div className="absolute bottom-full left-0 mb-1 rounded-lg border min-w-[260px] z-50 shadow-xl overflow-hidden"
+                      style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+                      {AGENT_MODES.map(m => (
+                        <button key={m.id}
+                          onClick={() => { changeMode(m.id); setShowModePicker(false); }}
+                          className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-white/5"
+                          style={{ color: agentMode === m.id ? "var(--accent)" : "var(--fg-secondary)" }}>
+                          <span className="material-symbols-outlined text-[15px] mt-[1px]">{m.icon}</span>
+                          <span className="flex-1">
+                            <span className="block text-[12px]">{m.label}</span>
+                            <span className="block text-[10px] leading-[14px]" style={{ color: "var(--fg-muted)" }}>
+                              {m.hint}
+                            </span>
+                          </span>
+                          {agentMode === m.id && (
+                            <span className="material-symbols-outlined text-[14px]">check</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="flex-1" />
               <span className="text-[10px] font-[family-name:var(--font-mono)] hidden sm:block" style={{ color: "var(--fg-muted)" }}>

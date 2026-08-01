@@ -37,9 +37,47 @@ class ChatRequest(BaseModel):
     display_content: str | None = None
     model: str | None = None
     agent_id: str | None = None
+    # auto | manual | readonly — how much the agent may do without asking.
+    # Unknown values fall back to the default rather than erroring, so a stale
+    # client can't lock a user out of their own agent.
+    agent_mode: str | None = None
     temperature: float = 0.7
     max_tokens: int = 2048
     stream: bool = True
+
+
+class PermissionReply(BaseModel):
+    reply: str  # once | always | reject
+    message: str | None = None
+
+
+@router.post("/permissions/{request_id}/reply")
+async def reply_to_permission(
+    request_id: str,
+    body: PermissionReply,
+    caller: Annotated[Caller, Depends(get_caller)],
+):
+    """Answer a pending permission request.
+
+    Ownership is checked against the user recorded when the request was raised.
+    This endpoint exists to close a security gap, so it must not open one: a
+    guessed request id from another account has to be worthless.
+    """
+    from app.services.permission_flow import get_request, submit_reply
+
+    if body.reply not in ("once", "always", "reject"):
+        raise HTTPException(status_code=400, detail="Invalid reply")
+
+    pending = await get_request(request_id)
+    if not pending:
+        raise HTTPException(status_code=404, detail="No such pending request")
+    if pending.get("user_id") != caller.user.id:
+        # Deliberately the same 404 as "not found" — distinguishing them would
+        # let an attacker confirm which request ids are real.
+        raise HTTPException(status_code=404, detail="No such pending request")
+
+    await submit_reply(request_id, body.reply, body.message)
+    return {"status": "accepted"}
 
 
 def _save_message(conversation_id: str, role: str, content: str, thinking: str | None, token_count: int, interrupted: bool = False):
@@ -215,7 +253,7 @@ async def chat_sse(
         if is_local and profile.temperature is not None:
             temperature = profile.temperature
         return StreamingResponse(
-            _agentic_sse_stream(http_client, ctx, model, temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, body.agent_id, request, profile),
+            _agentic_sse_stream(http_client, ctx, model, temperature, body.max_tokens, body.conversation_id, save_content, user.id, llm_base, llm_key, body.agent_id, request, profile, body.agent_mode),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -454,13 +492,25 @@ async def _llm_stream_with_retry(http_client, url, headers, body, max_retries=3)
     return None
 
 
-async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None, request=None, profile: CapabilityProfile | None = None):
+async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, conversation_id, user_content, user_id, llm_base=None, llm_key=None, agent_id=None, request=None, profile: CapabilityProfile | None = None, agent_mode: str | None = None):
     from app.routes.agent_poll import execute_tool
     from app.services.agent_guards import extract_paths, has_read, mark_read, unread_refusal
     from app.services.agent_tools import TOOL_DEFINITIONS, TOOL_NAMES
+    from app.services.permission_flow import (
+        add_grant, cleanup_request, denied_message, register_request,
+        rejected_message, session_grants, wait_for_reply,
+    )
+    from app.services.permissions import (
+        DEFAULT_MODE, MODES, always_pattern, evaluate_call, mode_ruleset,
+        pattern_for, permission_for,
+    )
     from app.services.tool_parser import parse_text_calls, strip_tool_call_text
 
     profile = profile or resolve_profile(model, llm_base is None)
+    # An unrecognised mode falls back to the default instead of failing: a stale
+    # client sending a mode we removed shouldn't be able to break the agent.
+    mode = agent_mode if agent_mode in MODES else DEFAULT_MODE
+    rules = mode_ruleset(mode)
 
     async def _client_gone() -> bool:
         # True when the browser aborted the request (user pressed Esc / closed tab).
@@ -671,13 +721,45 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
 
                 yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc_name, 'params': params})}\n\n"
 
-                # Read-before-edit: a model that never read the file is guessing at
-                # old_text, and a guess either wastes the turn or matches the wrong
-                # span. Refuse before dispatching and hand back what to do instead.
+                # Two gates, cheapest first.
+                #
+                # 1. Read-before-edit is automatic and costs the user nothing, so
+                #    it runs first — no point interrupting someone to approve an
+                #    edit we were going to refuse anyway.
+                # 2. The permission rules decide whether the user sees this at all.
                 edit_path = str(params.get("path") or "")
+                blocked: str | None = None
                 if (profile.read_before_edit and tc_name == "edit_file" and edit_path
                         and not await has_read(conversation_id, edit_path)):
-                    result = {"success": False, "error": unread_refusal(edit_path)}
+                    blocked = unread_refusal(edit_path)
+                else:
+                    decision = evaluate_call(
+                        tc_name, params, rules, await session_grants(conversation_id))
+                    if decision.action == "deny":
+                        blocked = denied_message(tc_name, mode)
+                    elif decision.action == "ask":
+                        req_id = str(uuid.uuid4())
+                        permission = permission_for(tc_name)
+                        await register_request(req_id, user_id, conversation_id,
+                                               tc_name, permission,
+                                               pattern_for(tc_name, params))
+                        yield f"data: {json.dumps({'type': 'permission_request', 'id': req_id, 'tool': tc_name, 'params': params, 'permission': permission, 'pattern': pattern_for(tc_name, params), 'mode': mode})}\n\n"
+                        answer = await wait_for_reply(req_id, _client_gone)
+                        await cleanup_request(req_id)
+                        yield f"data: {json.dumps({'type': 'permission_resolved', 'id': req_id, 'reply': answer['reply']})}\n\n"
+                        if answer["reply"] == "reject":
+                            blocked = rejected_message(
+                                tc_name, answer.get("message"), answer.get("reason"))
+                            if answer.get("reason") == "interrupted":
+                                interrupted = True
+                        elif answer["reply"] == "always":
+                            # Widened to the command family / this file, never
+                            # wider — see always_pattern.
+                            await add_grant(conversation_id, permission,
+                                            always_pattern(tc_name, params))
+
+                if blocked is not None:
+                    result = {"success": False, "error": blocked}
                 else:
                     # The profile rides along with the file-writing tools so the
                     # agent applies this model's fuzz level and write guard. Kept

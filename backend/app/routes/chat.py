@@ -406,12 +406,28 @@ def _save_tool_message(conversation_id: str, role: str, content: str, message_ty
 
 DOOM_LOOP_THRESHOLD = 3
 
+# Injected on the final allowed turn. Without it the loop simply stops at the cap:
+# the model is mid-tool-chain, `completed_normally` stays False, nothing is saved,
+# and the user gets a `done` event with no answer at all. Telling the model it has
+# one turn left converts a silent failure into a partial result plus next steps.
+MAX_STEPS_PROMPT = (
+    "You have reached the tool-call limit for this turn. Do NOT request any more "
+    "tools. Reply now with: what you did, what you found, anything you changed, and "
+    "the exact next step you would have taken. Be concise."
+)
+
 
 def _detect_doom_loop(history: list[tuple[str, str]]) -> bool:
-    if len(history) < DOOM_LOOP_THRESHOLD:
+    """True when the newest call has already been made twice before.
+
+    Counts total occurrences rather than consecutive ones. Consecutive-only
+    detection misses the common failure: a model alternating between two calls
+    that both fail (A, B, A, B, A …) never repeats itself back-to-back and loops
+    until the turn cap.
+    """
+    if not history:
         return False
-    last = history[-DOOM_LOOP_THRESHOLD:]
-    return all(t == last[0] for t in last)
+    return history.count(history[-1]) >= DOOM_LOOP_THRESHOLD
 
 
 async def _llm_stream_with_retry(http_client, url, headers, body, max_retries=3):
@@ -483,14 +499,25 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
             raw_thinking = ""
             tool_calls_accum: dict[int, dict] = {}
 
+            # Final allowed turn: tell the model to wrap up and take the tools away
+            # so it can't ask for another one. Sending the instruction without also
+            # dropping `tools` doesn't work — a model mid-chain will call one anyway.
+            final_turn = turn == max_turns - 1
+            llm_body: dict = {
+                "model": model, "messages": messages, "stream": True,
+                "temperature": temperature, "max_tokens": max_tokens,
+            }
+            if final_turn:
+                llm_body["messages"] = messages + [{"role": "system", "content": MAX_STEPS_PROMPT}]
+            else:
+                llm_body["tools"] = TOOL_DEFINITIONS
+
             try:
                 response = await _llm_stream_with_retry(
                     http_client,
                     chat_completions_url(base),
                     {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-                    {"model": model, "messages": messages, "stream": True,
-                     "temperature": temperature, "max_tokens": max_tokens,
-                     "tools": TOOL_DEFINITIONS},
+                    llm_body,
                 )
                 if not response:
                     yield f"data: {json.dumps({'type': 'error', 'text': 'LLM request failed after retries'})}\n\n"
@@ -571,7 +598,10 @@ async def _agentic_sse_stream(http_client, ctx, model, temperature, max_tokens, 
             # it through the provider's function-calling channel. Recover it and
             # run it: a turn that would otherwise be wasted describing an action
             # becomes the action.
-            if not tool_calls_accum and profile.parse_text_toolcalls and raw_content.strip():
+            # Not on the final turn — we just told the model to stop calling tools,
+            # so recovering a call out of its wrap-up text would defeat the point.
+            if (not final_turn and not tool_calls_accum
+                    and profile.parse_text_toolcalls and raw_content.strip()):
                 for i, call in enumerate(parse_text_calls(raw_content, TOOL_NAMES)):
                     tool_calls_accum[i] = {
                         "id": f"call_text_{turn}_{i}",
